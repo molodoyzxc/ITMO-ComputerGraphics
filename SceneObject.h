@@ -6,10 +6,12 @@
 
 #include "DX12Framework.h"
 #include "Material.h"
+#include <WICTextureLoader.h>
+#include <ResourceUploadBatch.h>
 
 struct SceneObject {
     Mesh mesh;      
-    uint32_t materialID = 0;
+    UINT materialID = 0;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> indexBuffer;
@@ -22,10 +24,13 @@ struct SceneObject {
     DirectX::XMFLOAT3 rotation;    
     DirectX::XMFLOAT3 scale;       
 
+    ComPtr<ID3D12Resource> texture;
+    ComPtr<ID3D12Resource> textureUploadHeap;
+
     SceneObject() = default;
 
     SceneObject(const Mesh& m,
-        uint32_t matID,
+        UINT matID,
         DirectX::XMFLOAT3 pos,
         DirectX::XMFLOAT3 rot,
         DirectX::XMFLOAT3 scl)
@@ -57,4 +62,9 @@ struct SceneObject {
     }
 public:
     void CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList);
+    void LoadTexture(
+        ID3D12Device* device,
+        ResourceUploadBatch& uploadBatch,
+        DX12Framework* framework,
+        const wchar_t* filename);
 };

@@ -1,15 +1,15 @@
-п»ї#include "CubeApp.h"
+#include "TexturedCubeApp.h"
 #include "Meshes.h"
 #include "d3dx12.h"
 #include "DX12Framework.h"
 #include <DirectXMath.h>
 #include <stdexcept>
 #include <math.h>
-
+#include <ResourceUploadBatch.h>
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
-struct CB { XMFLOAT4X4 WVP; XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor; XMFLOAT2 uvScale, uvOffset;};
+struct CB { XMFLOAT4X4 WVP; XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor; XMFLOAT2 uvScale, uvOffset; int useTexture, padding[3]; };
 
 static inline void ThrowIfFailed(HRESULT hr)
 {
@@ -17,27 +17,27 @@ static inline void ThrowIfFailed(HRESULT hr)
         throw std::runtime_error("HRESULT failed");
 }
 
-CubeApp::CubeApp(DX12Framework* framework, InputDevice* input)
+TexturedCubeApp::TexturedCubeApp(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
     , m_input(input)
     , m_pipeline(framework)
-    , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // РЅР°С‡Р°Р»СЊРЅР°СЏ РїРѕР·РёС†РёСЏ РєР°РјРµСЂС‹
-    , m_lightX(0), m_lightY(-5), m_lightZ(-1)   // РЅР°С‡Р°Р»СЊРЅРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ СЃРІРµС‚Р°
+    , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // начальная позиция камеры
+    , m_lightX(0), m_lightY(0), m_lightZ(5)   // начальное направление света
     , m_viewX(0), m_viewY(1), m_viewZ(0)
-    , m_yaw(0), m_pitch(0)                       // СѓРіР»С‹ РїРѕРІРѕСЂРѕС‚Р° РєР°РјРµСЂС‹
+    , m_yaw(0), m_pitch(0)                       // углы поворота камеры
 {
 }
 
-void CubeApp::Initialize()
+void TexturedCubeApp::Initialize()
 {
-    m_pipeline.Init(); // Root Signature Рё PSO
+    m_pipeline.Init(); // Root Signature и PSO
 
     auto* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
-    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD); // upload-С…РёРї
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD); // upload-хип
 
-    Mesh mesh = CreateCube ();
+    Mesh mesh = CreateCube();
 
     SceneObject Cube = {
     mesh,
@@ -45,22 +45,14 @@ void CubeApp::Initialize()
     {0,0,0},
     {1,1,1,},
     };
-    SceneObject Platform = {
-        mesh,
-        {0,-2,0},
-        {0,0,0},
-        {20,0.5f,20}
-    };
 
     m_objects.push_back(Cube);
-    m_objects.push_back(Platform);
 
     ThrowIfFailed(alloc->Reset());
     ThrowIfFailed(cmdList->Reset(alloc, nullptr));
 
     for (auto& obj : m_objects)
     {
-        obj.materialID = m_framework->GetWhiteTextureSrvIndex();
         obj.CreateBuffers(device, cmdList);
     }
 
@@ -68,6 +60,26 @@ void CubeApp::Initialize()
     ID3D12CommandList* lists[] = { cmdList };
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
+
+    // 2) Теперь загружаем текстуру через ResourceUploadBatch:
+    DirectX::ResourceUploadBatch uploadBatch(device);
+    uploadBatch.Begin();
+
+    for (auto& o : m_objects) {
+        // ! передаем корректный uploadBatch, а не cmdList
+        o.LoadTexture(device, uploadBatch, m_framework, L"texture.jpg");
+    }
+
+    // Записываем команды uploadBatch в cmdList
+    ThrowIfFailed(alloc->Reset());
+    ThrowIfFailed(cmdList->Reset(alloc, nullptr));
+
+    auto finish = uploadBatch.End(m_framework->GetCommandQueue());
+
+    ThrowIfFailed(cmdList->Close());
+    ID3D12CommandList* Clists[] = { cmdList };
+    m_framework->GetCommandQueue()->ExecuteCommandLists(1, Clists);
+    finish.wait();
 
     // Constant Buffer
     {
@@ -82,7 +94,7 @@ void CubeApp::Initialize()
     }
 }
 
-void CubeApp::Update(float dt)
+void TexturedCubeApp::Update(float dt)
 {
     const float rotationSpeed = 0.02f;
 
@@ -91,12 +103,12 @@ void CubeApp::Update(float dt)
     if (m_input->IsKeyDown(Keys::Up))    m_pitch += rotationSpeed;
     if (m_input->IsKeyDown(Keys::Down))  m_pitch -= rotationSpeed;
 
-    // РћРіСЂР°РЅРёС‡РµРЅРёРµ СѓРіР»Р° pitch (РЅР°РєР»РѕРЅР°)
+    // Ограничение угла pitch (наклона)
     const float limit = XM_PIDIV2 - 0.01f;
     if (m_pitch > limit)  m_pitch = limit;
     if (m_pitch < -limit) m_pitch = -limit;
 
-    // Р’С‹С‡РёСЃР»РµРЅРёРµ forward/right РІРµРєС‚РѕСЂРѕРІ РєР°РјРµСЂС‹
+    // Вычисление forward/right векторов камеры
     XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
     XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
@@ -127,7 +139,7 @@ void CubeApp::Update(float dt)
     if (m_input->IsKeyDown(Keys::E)) m_cameraY += moveSpeed;
 }
 
-void CubeApp::Render()
+void TexturedCubeApp::Render()
 {
     auto* cmd = m_framework->GetCommandList();
     auto* alloc = m_framework->GetCommandAllocator();
@@ -135,17 +147,17 @@ void CubeApp::Render()
 
     m_framework->BeginFrame();
 
-    // РѕС‡РёСЃС‚РєР° Р±СѓС„РµСЂР° С†РІРµС‚Р° Рё РіР»СѓР±РёРЅС‹=
+    // очистка буфера цвета и глубины=
     float clear[4]{ 0.1f,0.2f,1.0f,1.0f };
     m_framework->ClearColorAndDepthBuffer(clear);
 
-    // viewport Рё scissor-rect
+    // viewport и scissor-rect
     m_framework->SetViewportAndScissors();
 
     // Root Signature + PSO
     m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetPipelineState());
 
-    // РјР°С‚СЂРёС†С‹ РєР°РјРµСЂС‹ (world * view * proj)
+    // матрицы камеры (world * view * proj)
     CB cb;
     const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
     XMVECTOR forwardDir = XMVectorSet(
@@ -163,7 +175,7 @@ void CubeApp::Render()
     float fov = XM_PIDIV4;
     const XMMATRIX proj = XMMatrixPerspectiveFovLH(fov, aspect, 0.1f, 500.f);
 
-    // Р·Р°РїРѕР»РЅРµРЅРёРµ РІСЃРµРіРѕ cb
+    // заполнение всего cb
     const UINT cbSize = (sizeof(cb) + 255) & ~255;
     BYTE* pMappedData = nullptr;
     CD3DX12_RANGE readRange(0, 0);
@@ -201,7 +213,7 @@ void CubeApp::Render()
         cmd->SetGraphicsRootConstantBufferView(
             0,
             m_constantBuffer->GetGPUVirtualAddress() + i * cbSize
-        );
+        );  
 
         CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
             m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
@@ -210,11 +222,10 @@ void CubeApp::Render()
         );
         cmd->SetGraphicsRootDescriptorTable(1, texHandle);
 
-        // 3) РџСЂРёРІСЏР·РєР° Sampler: РІ РІР°С€РµРј СЃР»СѓС‡Р°Рµ РѕРЅ РІ РЅР°С‡Р°Р»Рµ РєСѓС‡Рё СЃР°РјРїР»РµСЂР°
+        // 3) Привязка Sampler: в вашем случае он в начале кучи самплера
         CD3DX12_GPU_DESCRIPTOR_HANDLE sampHandle(
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
         );
-
         cmd->SetGraphicsRootDescriptorTable(2, sampHandle);
 
         cmd->IASetVertexBuffers(0, 1, &m_objects[i].vbView);

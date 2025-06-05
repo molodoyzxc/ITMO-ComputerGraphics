@@ -53,7 +53,8 @@ public:
             throw std::runtime_error("SRV heap is full");
         return m_nextSrvDescriptor++;
     }
-
+    void BuildDefaultResources();
+    UINT GetWhiteTextureSrvIndex() const { return m_whiteSrvIndex; }
 
 
 private:
@@ -89,4 +90,7 @@ private:
     ComPtr<ID3D12Fence> m_fence;
     UINT64 m_fenceValue;
     HANDLE m_fenceEvent;
+    UINT m_whiteSrvIndex = UINT_MAX;
+    ComPtr<ID3D12Resource>    m_whiteTexture;
+    ComPtr<ID3D12Resource>    m_whiteUploadBuffer;
 };

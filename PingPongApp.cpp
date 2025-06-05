@@ -10,6 +10,8 @@
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
+struct CB { XMFLOAT4X4 WVP; XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor; XMFLOAT2 uvScale, uvOffset; };
+
 static inline void ThrowIfFailed(HRESULT hr)
 {
     if (FAILED(hr))
@@ -146,6 +148,7 @@ void PingPongApp::Initialize()
     ThrowIfFailed(cmdList->Reset(alloc, nullptr));
 
     for (auto& obj : m_objects) {
+        obj.materialID = m_framework->GetWhiteTextureSrvIndex();
         obj.CreateBuffers(device, cmdList);
     }
 
@@ -156,7 +159,6 @@ void PingPongApp::Initialize()
 
     // Constant Buffer
     {
-        struct CB { XMFLOAT4X4 WVP; XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor; };
         const UINT cbSize = (sizeof(CB) + 255) & ~255;
         const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
         const auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
@@ -353,7 +355,7 @@ void PingPongApp::Render()
     cmd->SetPipelineState(m_pipeline.GetPipelineState());
 
     // матрицы камеры (world * view * proj)
-    struct CB { XMFLOAT4X4 WVP; XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor; } cb;
+    CB cb;
     const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
     XMVECTOR forwardDir = XMVectorSet(
         cosf(m_pitch) * sinf(m_yaw),
@@ -380,6 +382,8 @@ void PingPongApp::Render()
         XMMATRIX wvp = world * view * proj;
         XMStoreFloat4x4(&cb.WVP, wvp);
         XMStoreFloat4(&cb.EyePos, eye);
+        cb.uvScale = DirectX::XMFLOAT2(1.0f, 1.0f);
+        cb.uvOffset = DirectX::XMFLOAT2(0.0f, 0.0f);
         cb.ObjectColor = colors[i];
         cb.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
         cb.LightColor = { 1,1,1,0 };
@@ -391,12 +395,34 @@ void PingPongApp::Render()
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+    {
+        ID3D12DescriptorHeap* heaps[] = {
+            m_framework->GetSrvHeap(),
+            m_framework->GetSamplerHeap()
+        };
+        cmd->SetDescriptorHeaps(_countof(heaps), heaps);
+    }
+
     for (UINT i = 0; i < m_objects.size(); ++i)
     {
         cmd->SetGraphicsRootConstantBufferView(
             0,
             m_constantBuffer->GetGPUVirtualAddress() + i * cbSize
         );
+
+        CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
+            m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
+            m_objects[i].materialID,
+            m_framework->GetSrvDescriptorSize()
+        );
+        cmd->SetGraphicsRootDescriptorTable(1, texHandle);
+
+        // 3) Привязка Sampler: в вашем случае он в начале кучи самплера
+        CD3DX12_GPU_DESCRIPTOR_HANDLE sampHandle(
+            m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
+        );
+
+        cmd->SetGraphicsRootDescriptorTable(2, sampHandle);
 
         cmd->IASetVertexBuffers(0, 1, &m_objects[i].vbView);
         cmd->IASetIndexBuffer(&m_objects[i].ibView);

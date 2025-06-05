@@ -2,7 +2,7 @@
 #include <dxgi1_4.h>
 #include "d3dx12.h"
 #include <stdexcept>
-
+#include "WICTextureLoader.h"
 using Microsoft::WRL::ComPtr;
 
 inline void ThrowIfFailed(HRESULT hr)
@@ -34,6 +34,7 @@ void DX12Framework::Init()
     CreateDescriptorHeaps();    // кучи дескрипторов RTV/DSV
     CreateRenderTargetViews();  // RTV для бэкбуферов
     CreateDepthResources();     // буфер глубины
+    BuildDefaultResources();
 }
 
 // ID3D12Device
@@ -65,7 +66,6 @@ void DX12Framework::CreateDevice()
         infoQueue->AddStorageFilterEntries(&filter);
     }
 }
-
 
 // очередь, allocator, список команд, забор
 void DX12Framework::CreateCommandObjects()
@@ -154,6 +154,27 @@ void DX12Framework::CreateDescriptorHeaps()
     sampDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&sampDesc, IID_PPV_ARGS(&m_samplerHeap)));
     m_samplerDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
+
+    D3D12_SAMPLER_DESC samplerDesc = {};
+    samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplerDesc.MipLODBias = 0;
+    samplerDesc.MaxAnisotropy = 1;
+    samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    samplerDesc.BorderColor[0] = samplerDesc.BorderColor[1]
+        = samplerDesc.BorderColor[2]
+        = samplerDesc.BorderColor[3] = 0.0f;
+    samplerDesc.MinLOD = 0;
+    samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+
+    // Получаем CPU-дескриптор начала кучи самплера
+    CD3DX12_CPU_DESCRIPTOR_HANDLE sampHandleCPU(
+        m_samplerHeap->GetCPUDescriptorHandleForHeapStart()
+    );
+    // Создаём самплер
+    m_device->CreateSampler(&samplerDesc, sampHandleCPU);
 }
 
 // RTV для каждого back-buffer.
@@ -207,7 +228,6 @@ void DX12Framework::Present()
     ThrowIfFailed(m_swapChain->Present(1, 0));
     m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
 }
-
 
 // fence
 void DX12Framework::WaitForGpu()
@@ -293,4 +313,117 @@ void DX12Framework::EndFrame() {
     ID3D12CommandList* lists[]{ m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(1,lists);
     Present();
+}
+
+void DX12Framework::BuildDefaultResources()
+{
+    // Предполагается, что device и cmdList уже инициализированы
+    // Сбросим cmdList, чтобы залить белую текстуру:
+
+    ThrowIfFailed(m_commandAllocator->Reset());
+    ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), nullptr));
+
+    // 1) Описание 1×1 текстуры:
+    D3D12_RESOURCE_DESC texDesc = {};
+    texDesc.MipLevels = 1;
+    texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    texDesc.Width = 1;
+    texDesc.Height = 1;
+    texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    texDesc.DepthOrArraySize = 1;
+    texDesc.SampleDesc.Count = 1;
+    texDesc.SampleDesc.Quality = 0;
+    texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+    // 2) Создаём GPU-ресурс (Default heap)
+    {
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        ThrowIfFailed(m_device->CreateCommittedResource(
+            &heapDefault,
+            D3D12_HEAP_FLAG_NONE,
+            &texDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&m_whiteTexture)
+        ));
+    }
+
+    // 3) Вычисляем, сколько GPU памяти нужно для upload буфера
+    UINT64 uploadSize = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
+    UINT numRows;
+    unsigned long long rowSize;
+    m_device->GetCopyableFootprints(
+        &texDesc,
+        0,    // первая subresource
+        1,    // количество subresources
+        0,    // смещение
+        &layout,
+        &numRows,
+        &rowSize,
+        &uploadSize
+    );
+
+    // 4) Создаём upload-буфер (Upload heap)
+    {
+        CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+        CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadSize);
+        ThrowIfFailed(m_device->CreateCommittedResource(
+            &heapUpload,
+            D3D12_HEAP_FLAG_NONE,
+            &bufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&m_whiteUploadBuffer)
+        ));
+    }
+
+    // 5) Записываем в upload-буфер пиксель (255,255,255,255)
+    {
+        UINT8 whitePixel[4] = { 255, 255, 255, 255 };
+        D3D12_SUBRESOURCE_DATA subData = {};
+        subData.pData = whitePixel;
+        subData.RowPitch = 4; // 4 байта в строке (RGBA)
+        subData.SlicePitch = 4;
+
+        UpdateSubresources(m_commandList.Get(), m_whiteTexture.Get(), m_whiteUploadBuffer.Get(), 0, 0, 1, &subData);
+
+        // Стадия: COPY_DEST → PIXEL_SHADER_RESOURCE
+        CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_whiteTexture.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        );
+        m_commandList->ResourceBarrier(1, &barrier);
+    }
+
+    // 6) Закрываем и выполняем cmdList
+    ThrowIfFailed(m_commandList->Close());
+    {
+        ID3D12CommandList* lists[] = { m_commandList.Get()};
+        m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
+    }
+    WaitForGpu(); // ваш метод ожидания
+
+    // 7) Создаём SRV-дескриптор для белой текстуры в куче CBV/SRV/UAV
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels = 1;
+
+        // Первый дескриптор, который выделим — будет для белой
+        m_whiteSrvIndex = AllocateSrvDescriptor(); // обычно вернёт 0 при свежей куче
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(
+            m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
+            m_whiteSrvIndex,
+            m_srvDescriptorSize
+        );
+        m_device->CreateShaderResourceView(m_whiteTexture.Get(), &srvDesc, cpuHandle);
+    }
+
+    // Теперь у нас есть:
+    //   m_whiteTexture  — ресурс 1×1 белого пикселя
+    //   m_whiteSrvIndex — индекс SRV в куче (чаще всего 0)
 }

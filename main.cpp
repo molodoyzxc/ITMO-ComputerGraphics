@@ -6,6 +6,7 @@
 #include "SolarSystemApp.h"
 #include "PingPongApp.h"
 #include "TestApp.h"
+#include "TexturedCubeApp.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
@@ -16,7 +17,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();
 
-    IGameApp* app = new PingPongApp(&framework, window.GetInput());
+    IGameApp* app = new SolarSystemApp(&framework, window.GetInput());
     app->Initialize();
 
     Timer timer;    

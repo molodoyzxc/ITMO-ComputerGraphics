@@ -26,7 +26,7 @@ void Pipeline::Init()
 #endif
 
     HRESULT hr = D3DCompileFromFile(
-        L"Shaders.hlsl",
+        L"TexturedShaders.hlsl",
         nullptr, nullptr,
         "VSMain", "vs_5_0",
         compileFlags, 0,
@@ -41,7 +41,7 @@ void Pipeline::Init()
     }
 
     hr = D3DCompileFromFile(
-        L"Shaders.hlsl",
+        L"TexturedShaders.hlsl",
         nullptr, nullptr,
         "PSMain", "ps_5_0",
         compileFlags, 0,
@@ -58,12 +58,20 @@ void Pipeline::Init()
     // 2) Формат входных вершин
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0,  24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
     };
 
+    CD3DX12_DESCRIPTOR_RANGE srvRange;
+    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
+    CD3DX12_DESCRIPTOR_RANGE samplerRange;
+    samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0); // s0
+
     // 3) Root Signature: только CBV
-    CD3DX12_ROOT_PARAMETER slotParam[1];
+    CD3DX12_ROOT_PARAMETER slotParam[3];
     slotParam[0].InitAsConstantBufferView(0);
+    slotParam[1].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
+    slotParam[2].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_PIXEL);
 
     CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc;
     rootSigDesc.Init(
