@@ -105,10 +105,9 @@ void SceneObject::CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList*
 
 void SceneObject::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename)
 {
-    // 1) Записываем команды загрузки текстуры в uploadBatch
     HRESULT hr = DirectX::CreateWICTextureFromFile(
         device,
-        uploadBatch,  // <-- теперь передаём uploadBatch, а не cmdList
+        uploadBatch,
         filename,
         texture.ReleaseAndGetAddressOf(),
         textureUploadHeap.ReleaseAndGetAddressOf()
@@ -117,26 +116,21 @@ void SceneObject::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
         throw std::runtime_error("CreateWICTextureFromFile failed");
     }
 
-    // 2) Получаем свободный индекс (слот) для SRV
     UINT srvIndex = framework->AllocateSrvDescriptor();
 
-    // 3) Описываем SRV (предполагаем формат R8G8B8A8_UNORM)
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srvDesc.Texture2D.MipLevels = UINT(-1);
 
-    // 4) Вычисляем CPU-дескриптор для SRV-ячейки
     CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(
         framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart(),
         srvIndex,
         framework->GetSrvDescriptorSize()
     );
 
-    // 5) Создаём сам SRV в указанной ячейке
     device->CreateShaderResourceView(texture.Get(), &srvDesc, cpuHandle);
 
-    // 6) Сохраняем номер (слот) SRV в materialID
     materialID = srvIndex;
 }

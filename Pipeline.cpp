@@ -55,7 +55,6 @@ void Pipeline::Init()
         ThrowIfFailed(hr);
     }
 
-    // 2) Формат входных вершин
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -67,7 +66,6 @@ void Pipeline::Init()
     CD3DX12_DESCRIPTOR_RANGE samplerRange;
     samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0); // s0
 
-    // 3) Root Signature: только CBV
     CD3DX12_ROOT_PARAMETER slotParam[3];
     slotParam[0].InitAsConstantBufferView(0);
     slotParam[1].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -114,20 +112,18 @@ void Pipeline::Init()
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
     psoDesc.InputLayout = { inputLayout, _countof(inputLayout) }; 
     psoDesc.pRootSignature = m_rootSignature.Get();               
-    psoDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() }; // шейдеры
+    psoDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
     psoDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
 
     // состояние растеризатора
     psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     psoDesc.RasterizerState.FrontCounterClockwise = FALSE;          
     psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;         
-
-    // смешивание (Blending)
     psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 
     // глубина и трафарет
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;  // Формат буфера глубины
+    psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
     psoDesc.SampleMask = UINT_MAX;
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -135,7 +131,7 @@ void Pipeline::Init()
     psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM; // формат цветового буффреа
     psoDesc.SampleDesc.Count = 1;
 
-    // Создание PSO
+    // создание
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &psoDesc,
         IID_PPV_ARGS(&m_pipelineState)

@@ -17,13 +17,9 @@ public:
     void Present();
     D3D12_CPU_DESCRIPTOR_HANDLE GetDSVHandle() const { return m_dsvHandle; }
     ID3D12Device* GetDevice() const { return m_device.Get(); }
-    // Командная очередь
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }
-    // Командный список
     ID3D12GraphicsCommandList* GetCommandList() const { return m_commandList.Get(); }
-    // Аллокатор для сброса командного списка
     ID3D12CommandAllocator* GetCommandAllocator() const { return m_commandAllocator.Get(); }
-    // Текущий RTV-дескриптор
     D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRTVHandle() const {
         return CD3DX12_CPU_DESCRIPTOR_HANDLE(
             m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),

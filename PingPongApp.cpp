@@ -50,12 +50,12 @@ std::vector<Mesh> RomanDigits = GenerateRomanDigits();
 
 void PingPongApp::Initialize()
 {
-    m_pipeline.Init(); // Root Signature и PSO
+    m_pipeline.Init();
 
     auto* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
-    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD); // upload-хип
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
     device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_uploadAlloc));
     device->CreateCommandList(
@@ -157,7 +157,6 @@ void PingPongApp::Initialize()
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
 
-    // Constant Buffer
     {
         const UINT cbSize = (sizeof(CB) + 255) & ~255;
         const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
@@ -206,12 +205,10 @@ void PingPongApp::Update(float dt)
     //if (m_input->IsKeyDown(Keys::Up))    m_pitch += rotationSpeed;
     //if (m_input->IsKeyDown(Keys::Down))  m_pitch -= rotationSpeed;
 
-    // ограничение угла pitch (наклона)
     const float limit = XM_PIDIV2 - 0.01f;
     if (m_pitch > limit)  m_pitch = limit;
     if (m_pitch < -limit) m_pitch = -limit;
 
-    // ¬ычисление forward/right векторов камеры
     XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
     XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
@@ -336,25 +333,13 @@ void PingPongApp::Render()
 
     m_framework->BeginFrame();
 
-    // очистка буфера цвета и глубины
-    auto rtv = m_framework->GetCurrentRTVHandle();
-    const float clear[4]{ 0.0f,0.0f,0.0f,1.0f };
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = m_framework->GetDSVHandle();
-    cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsvHandle);
-    cmd->ClearRenderTargetView(rtv, clear, 0, nullptr);
-    cmd->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    float clear[4]{ 0.0f,0.0f,0.0f,1.0f };
+    m_framework->ClearColorAndDepthBuffer(clear);
 
-    // viewport и scissor-rect
-    const D3D12_VIEWPORT vp{ 0,0,m_framework->GetWidth(),m_framework->GetHeight(),0,1 };
-    const D3D12_RECT     sr{ 0,0,m_framework->GetWidth(),m_framework->GetHeight() };
-    cmd->RSSetViewports(1, &vp);
-    cmd->RSSetScissorRects(1, &sr);
+    m_framework->SetViewportAndScissors();
 
-    // Root Signature + PSO
-    cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
-    cmd->SetPipelineState(m_pipeline.GetPipelineState());
+    m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetPipelineState());
 
-    // матрицы камеры (world * view * proj)
     CB cb;
     const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
     XMVECTOR forwardDir = XMVectorSet(
@@ -370,7 +355,6 @@ void PingPongApp::Render()
     float aspect = m_framework->GetWidth() / m_framework->GetHeight();
     const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500.f);
 
-    // заполнение всего cb
     const UINT cbSize = (sizeof(cb) + 255) & ~255;
     BYTE* pMappedData = nullptr;
     CD3DX12_RANGE readRange(0, 0);
@@ -417,7 +401,6 @@ void PingPongApp::Render()
         );
         cmd->SetGraphicsRootDescriptorTable(1, texHandle);
 
-        // 3) ѕрив€зка Sampler: в вашем случае он в начале кучи самплера
         CD3DX12_GPU_DESCRIPTOR_HANDLE sampHandle(
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
         );

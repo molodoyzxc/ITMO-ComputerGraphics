@@ -7,17 +7,16 @@
 #include "PingPongApp.h"
 #include "TestApp.h"
 #include "TexturedCubeApp.h"
+#include "ModelApp.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
-    // Создание окна
     Window window(hInstance, nCmdShow, L"Dota 3", 1280.0f, 720.0f);
 
-    // Фреймворк
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();
 
-    IGameApp* app = new SolarSystemApp(&framework, window.GetInput());
+    IGameApp* app = new PingPongApp(&framework, window.GetInput());
     app->Initialize();
 
     Timer timer;    

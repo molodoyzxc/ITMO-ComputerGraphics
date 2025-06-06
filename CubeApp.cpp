@@ -30,12 +30,12 @@ CubeApp::CubeApp(DX12Framework* framework, InputDevice* input)
 
 void CubeApp::Initialize()
 {
-    m_pipeline.Init(); // Root Signature и PSO
+    m_pipeline.Init();
 
     auto* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
-    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD); // upload-хип
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
     Mesh mesh = CreateCube ();
 
@@ -69,7 +69,7 @@ void CubeApp::Initialize()
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
 
-    // Constant Buffer
+    // CB
     {
         const UINT cbSize = (sizeof(CB) + 255) & ~255;
         const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
@@ -91,12 +91,10 @@ void CubeApp::Update(float dt)
     if (m_input->IsKeyDown(Keys::Up))    m_pitch += rotationSpeed;
     if (m_input->IsKeyDown(Keys::Down))  m_pitch -= rotationSpeed;
 
-    // Ограничение угла pitch (наклона)
     const float limit = XM_PIDIV2 - 0.01f;
     if (m_pitch > limit)  m_pitch = limit;
     if (m_pitch < -limit) m_pitch = -limit;
 
-    // Вычисление forward/right векторов камеры
     XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
     XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
@@ -135,14 +133,11 @@ void CubeApp::Render()
 
     m_framework->BeginFrame();
 
-    // очистка буфера цвета и глубины=
     float clear[4]{ 0.1f,0.2f,1.0f,1.0f };
     m_framework->ClearColorAndDepthBuffer(clear);
 
-    // viewport и scissor-rect
     m_framework->SetViewportAndScissors();
 
-    // Root Signature + PSO
     m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetPipelineState());
 
     // матрицы камеры (world * view * proj)
@@ -163,7 +158,6 @@ void CubeApp::Render()
     float fov = XM_PIDIV4;
     const XMMATRIX proj = XMMatrixPerspectiveFovLH(fov, aspect, 0.1f, 500.f);
 
-    // заполнение всего cb
     const UINT cbSize = (sizeof(cb) + 255) & ~255;
     BYTE* pMappedData = nullptr;
     CD3DX12_RANGE readRange(0, 0);
@@ -210,7 +204,6 @@ void CubeApp::Render()
         );
         cmd->SetGraphicsRootDescriptorTable(1, texHandle);
 
-        // 3) Привязка Sampler: в вашем случае он в начале кучи самплера
         CD3DX12_GPU_DESCRIPTOR_HANDLE sampHandle(
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
         );

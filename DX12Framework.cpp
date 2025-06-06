@@ -29,7 +29,7 @@ DX12Framework::~DX12Framework()
 void DX12Framework::Init()
 {
     CreateDevice();             // устройство
-    CreateCommandObjects();     // очередь, allocator, список команд, забор
+    CreateCommandObjects();     // очередь, allocator, список команд, fence
     CreateSwapChain();          // свапчейн
     CreateDescriptorHeaps();    // кучи дескрипторов RTV/DSV
     CreateRenderTargetViews();  // RTV для бэкбуферов
@@ -48,7 +48,6 @@ void DX12Framework::CreateDevice()
     ComPtr<IDXGIFactory4> factory;
     ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
 
-    // nullptr → использовать первый доступный GPU
     ThrowIfFailed(D3D12CreateDevice(
         nullptr,
         D3D_FEATURE_LEVEL_11_0,
@@ -58,8 +57,7 @@ void DX12Framework::CreateDevice()
     if (SUCCEEDED(m_device.As(&infoQueue))) {
         infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
         infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
-        // Можно фильтровать спам:
-        D3D12_MESSAGE_ID denyIds[] = { D3D12_MESSAGE_ID_MAP_INVALID_NULLRANGE /*…*/ };
+        D3D12_MESSAGE_ID denyIds[] = { D3D12_MESSAGE_ID_MAP_INVALID_NULLRANGE };
         D3D12_INFO_QUEUE_FILTER filter = {};
         filter.DenyList.NumIDs = _countof(denyIds);
         filter.DenyList.pIDList = denyIds;
@@ -67,7 +65,7 @@ void DX12Framework::CreateDevice()
     }
 }
 
-// очередь, allocator, список команд, забор
+// очередь, allocator, список команд, fence
 void DX12Framework::CreateCommandObjects()
 {
     D3D12_COMMAND_QUEUE_DESC cqDesc = {};
@@ -121,7 +119,7 @@ void DX12Framework::CreateSwapChain()
 // RTV и DSV дескрипторные кучи.
 void DX12Framework::CreateDescriptorHeaps()
 {
-    // RTV heap
+    // RTV куча
     D3D12_DESCRIPTOR_HEAP_DESC rtvDesc = {};
     rtvDesc.NumDescriptors = FrameCount;
     rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -132,7 +130,7 @@ void DX12Framework::CreateDescriptorHeaps()
         m_device->GetDescriptorHandleIncrementSize(
             D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    // DSV heap
+    // DSV куча
     D3D12_DESCRIPTOR_HEAP_DESC dsvDesc = {};
     dsvDesc.NumDescriptors = 1;
     dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
@@ -142,14 +140,14 @@ void DX12Framework::CreateDescriptorHeaps()
     m_dsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
 
     D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
-    srvDesc.NumDescriptors = 100; // заранее зарезервировать нужное число
+    srvDesc.NumDescriptors = 100;
     srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&m_srvHeap)));
     m_srvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
     D3D12_DESCRIPTOR_HEAP_DESC sampDesc = {};
-    sampDesc.NumDescriptors = 1; // минимум — один самплер
+    sampDesc.NumDescriptors = 1;
     sampDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
     sampDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&sampDesc, IID_PPV_ARGS(&m_samplerHeap)));
@@ -169,15 +167,13 @@ void DX12Framework::CreateDescriptorHeaps()
     samplerDesc.MinLOD = 0;
     samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
 
-    // Получаем CPU-дескриптор начала кучи самплера
     CD3DX12_CPU_DESCRIPTOR_HANDLE sampHandleCPU(
         m_samplerHeap->GetCPUDescriptorHandleForHeapStart()
     );
-    // Создаём самплер
+
     m_device->CreateSampler(&samplerDesc, sampHandleCPU);
 }
 
-// RTV для каждого back-buffer.
 void DX12Framework::CreateRenderTargetViews()
 {
     CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
@@ -202,8 +198,8 @@ void DX12Framework::CreateDepthResources()
         CD3DX12_RESOURCE_DESC::Tex2D(
             DXGI_FORMAT_D32_FLOAT,
             m_width, m_height,
-            1, 1,  // arraySize, mipLevels
-            1, 0,  // sampleCount, sampleQuality
+            1, 1,
+            1, 0,
             D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
 
     D3D12_CLEAR_VALUE clearVal{};
@@ -253,7 +249,7 @@ void DX12Framework::ClearColorAndDepthBuffer(float clear[4])
 
 void DX12Framework::SetViewportAndScissors()
 {
-    D3D12_VIEWPORT vp{ 0,0,m_width,m_height,0,1 };
+    D3D12_VIEWPORT vp{ 0,0,m_width,m_height,0.0f,1.0f };
     D3D12_RECT sr{ 0,0,m_width,m_height };
     m_commandList->RSSetViewports(1, &vp);
     m_commandList->RSSetScissorRects(1, &sr);
@@ -293,37 +289,52 @@ void DX12Framework::Clear(const FLOAT clearColor[4])
     WaitForGpu();
 }
 
-void DX12Framework::BeginFrame() {
+void DX12Framework::BeginFrame()
+{
     auto backBuffer = GetCurrentBackBufferResource();
-    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+    CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
         backBuffer,
         D3D12_RESOURCE_STATE_PRESENT,
-        D3D12_RESOURCE_STATE_RENDER_TARGET);
+        D3D12_RESOURCE_STATE_RENDER_TARGET
+    );
     m_commandList->ResourceBarrier(1, &barrier);
+
+    auto rtv = GetCurrentRTVHandle();
+    m_commandList->OMSetRenderTargets(1, &rtv, FALSE, &m_dsvHandle);
 }
 
-void DX12Framework::EndFrame() {
+void DX12Framework::EndFrame()
+{
     auto backBuffer = GetCurrentBackBufferResource();
-    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+    CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
         backBuffer,
         D3D12_RESOURCE_STATE_RENDER_TARGET,
-        D3D12_RESOURCE_STATE_PRESENT);
+        D3D12_RESOURCE_STATE_PRESENT
+    );
     m_commandList->ResourceBarrier(1, &barrier);
-    m_commandList->Close();
-    ID3D12CommandList* lists[]{ m_commandList.Get() };
-    m_commandQueue->ExecuteCommandLists(1,lists);
-    Present();
+
+    ThrowIfFailed(m_commandList->Close());
+    ID3D12CommandList* lists[] = { m_commandList.Get() };
+    m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
+
+    ThrowIfFailed(m_swapChain->Present(1, 0));
+    m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+
+    const UINT64 fenceToWaitFor = ++m_fenceValue;
+    ThrowIfFailed(m_commandQueue->Signal(m_fence.Get(), fenceToWaitFor));
+    if (m_fence->GetCompletedValue() < fenceToWaitFor) {
+        ThrowIfFailed(m_fence->SetEventOnCompletion(fenceToWaitFor, m_fenceEvent));
+        WaitForSingleObject(m_fenceEvent, INFINITE);
+    }
 }
+
 
 void DX12Framework::BuildDefaultResources()
 {
-    // Предполагается, что device и cmdList уже инициализированы
-    // Сбросим cmdList, чтобы залить белую текстуру:
-
     ThrowIfFailed(m_commandAllocator->Reset());
     ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), nullptr));
 
-    // 1) Описание 1×1 текстуры:
+    // 1×1 текстура
     D3D12_RESOURCE_DESC texDesc = {};
     texDesc.MipLevels = 1;
     texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -335,7 +346,6 @@ void DX12Framework::BuildDefaultResources()
     texDesc.SampleDesc.Quality = 0;
     texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
 
-    // 2) Создаём GPU-ресурс (Default heap)
     {
         CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
         ThrowIfFailed(m_device->CreateCommittedResource(
@@ -348,23 +358,21 @@ void DX12Framework::BuildDefaultResources()
         ));
     }
 
-    // 3) Вычисляем, сколько GPU памяти нужно для upload буфера
     UINT64 uploadSize = 0;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
     UINT numRows;
     unsigned long long rowSize;
     m_device->GetCopyableFootprints(
         &texDesc,
-        0,    // первая subresource
-        1,    // количество subresources
-        0,    // смещение
+        0,
+        1,
+        0,
         &layout,
         &numRows,
         &rowSize,
         &uploadSize
     );
 
-    // 4) Создаём upload-буфер (Upload heap)
     {
         CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
         CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadSize);
@@ -378,17 +386,15 @@ void DX12Framework::BuildDefaultResources()
         ));
     }
 
-    // 5) Записываем в upload-буфер пиксель (255,255,255,255)
     {
         UINT8 whitePixel[4] = { 255, 255, 255, 255 };
         D3D12_SUBRESOURCE_DATA subData = {};
         subData.pData = whitePixel;
-        subData.RowPitch = 4; // 4 байта в строке (RGBA)
+        subData.RowPitch = 4;
         subData.SlicePitch = 4;
 
         UpdateSubresources(m_commandList.Get(), m_whiteTexture.Get(), m_whiteUploadBuffer.Get(), 0, 0, 1, &subData);
 
-        // Стадия: COPY_DEST → PIXEL_SHADER_RESOURCE
         CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
             m_whiteTexture.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST,
@@ -397,15 +403,13 @@ void DX12Framework::BuildDefaultResources()
         m_commandList->ResourceBarrier(1, &barrier);
     }
 
-    // 6) Закрываем и выполняем cmdList
     ThrowIfFailed(m_commandList->Close());
     {
         ID3D12CommandList* lists[] = { m_commandList.Get()};
         m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
     }
-    WaitForGpu(); // ваш метод ожидания
+    WaitForGpu();
 
-    // 7) Создаём SRV-дескриптор для белой текстуры в куче CBV/SRV/UAV
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
@@ -413,8 +417,7 @@ void DX12Framework::BuildDefaultResources()
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Texture2D.MipLevels = 1;
 
-        // Первый дескриптор, который выделим — будет для белой
-        m_whiteSrvIndex = AllocateSrvDescriptor(); // обычно вернёт 0 при свежей куче
+        m_whiteSrvIndex = AllocateSrvDescriptor();
         CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(
             m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
             m_whiteSrvIndex,
@@ -422,8 +425,4 @@ void DX12Framework::BuildDefaultResources()
         );
         m_device->CreateShaderResourceView(m_whiteTexture.Get(), &srvDesc, cpuHandle);
     }
-
-    // Теперь у нас есть:
-    //   m_whiteTexture  — ресурс 1×1 белого пикселя
-    //   m_whiteSrvIndex — индекс SRV в куче (чаще всего 0)
 }

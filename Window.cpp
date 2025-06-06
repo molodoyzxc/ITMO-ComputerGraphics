@@ -13,7 +13,7 @@ Window::Window(HINSTANCE hInstance, int nCmdShow,
         className_,             
         title_.c_str(),         
         WS_OVERLAPPEDWINDOW,    
-        CW_USEDEFAULT, CW_USEDEFAULT, // позиция окна по умолчанию
+        CW_USEDEFAULT, CW_USEDEFAULT,
         width_, height_,        
         nullptr, nullptr,       
         hInstance_,             
@@ -22,14 +22,13 @@ Window::Window(HINSTANCE hInstance, int nCmdShow,
 
     ShowWindow(hWnd_, nCmdShow);
 
-    input_ = new InputDevice(hWnd_); // объект ввода
+    input_ = new InputDevice(hWnd_);
 
-    // устройство для получения сырых событий клавиатуры
     RAWINPUTDEVICE Rid;
-    Rid.usUsagePage = 0x01;     // устройство ввода
-    Rid.usUsage = 0x06;         // клавиатура
+    Rid.usUsagePage = 0x01;
+    Rid.usUsage = 0x06; // клавиатура
     Rid.dwFlags = RIDEV_INPUTSINK;
-    Rid.hwndTarget = hWnd_;     // получатель событий
+    Rid.hwndTarget = hWnd_;
 
     RegisterRawInputDevices(&Rid, 1, sizeof(RAWINPUTDEVICE)); // регистрация
 }
@@ -63,9 +62,9 @@ LRESULT CALLBACK Window::WndProcThunk(
     if (message == WM_NCCREATE)
     {
         CREATESTRUCT* cs = reinterpret_cast<CREATESTRUCT*>(lParam);
-        window = reinterpret_cast<Window*>(cs->lpCreateParams); // получаем указатель на Window
-        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)window); // сохраняем в UserData
-        window->hWnd_ = hWnd; // запоминаем HWND
+        window = reinterpret_cast<Window*>(cs->lpCreateParams);
+        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)window);
+        window->hWnd_ = hWnd;
     }
     else
     {
@@ -78,7 +77,6 @@ LRESULT CALLBACK Window::WndProcThunk(
         : DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-// оконная процедура
 inline LRESULT Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -87,11 +85,9 @@ inline LRESULT Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
         PostQuitMessage(0);
         return 0;
 
-    // обработка ввода
     case WM_INPUT:
     {
         UINT dwSize = 0;
-        // размер буфера
         GetRawInputData((HRAWINPUT)lParam, RID_INPUT, nullptr, &dwSize, sizeof(RAWINPUTHEADER));
         if (dwSize == 0)
             break;
@@ -100,7 +96,6 @@ inline LRESULT Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
         if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, buffer.data(), &dwSize, sizeof(RAWINPUTHEADER)) != dwSize)
             break;
 
-        // преобразование в RAWINPUT
         RAWINPUT* raw = reinterpret_cast<RAWINPUT*>(buffer.data());
 
         if (raw->header.dwType == RIM_TYPEKEYBOARD)
@@ -125,16 +120,15 @@ inline LRESULT Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
     }
 }
 
-// обработка сообщений
 bool Window::ProcessMessages()
 {
     MSG msg = {};
     while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
     {
-        TranslateMessage(&msg);  // обработка WM_CHAR
-        DispatchMessage(&msg);   // отправка в оконную процедуру
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
 
-        if (msg.message == WM_QUIT) // выход
+        if (msg.message == WM_QUIT)
             return false;
     }
     return true;
