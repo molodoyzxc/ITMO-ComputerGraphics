@@ -11,12 +11,12 @@
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
-    Window window(hInstance, nCmdShow, L"Dota 3", 1280.0f, 720.0f);
+    Window window(hInstance, nCmdShow, L"DirectX12", 1280.0f, 720.0f);
 
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();
 
-    IGameApp* app = new PingPongApp(&framework, window.GetInput());
+    IGameApp* app = new CubeApp(&framework, window.GetInput());
     app->Initialize();
 
     Timer timer;    

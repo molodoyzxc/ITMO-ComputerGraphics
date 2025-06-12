@@ -39,7 +39,7 @@ void SolarSystemApp::Initialize()
     auto alloc = m_framework->GetCommandAllocator();
     CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
-    Mesh mesh = CreateSphere();
+    Mesh mesh = CreateCube();
 
     SceneObject Sun = {
     mesh,

@@ -67,7 +67,7 @@ void TexturedCubeApp::Initialize()
 
     for (auto& o : m_objects) {
         // ! передаем корректный uploadBatch, а не cmdList
-        o.LoadTexture(device, uploadBatch, m_framework, L"texture.jpg");
+        o.LoadTexture(device, uploadBatch, m_framework, L"Textures\\texture.jpg");
     }
 
     // Записываем команды uploadBatch в cmdList

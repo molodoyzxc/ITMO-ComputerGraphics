@@ -113,7 +113,7 @@ void SceneObject::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
         textureUploadHeap.ReleaseAndGetAddressOf()
     );
     if (FAILED(hr)) {
-        throw std::runtime_error("CreateWICTextureFromFile failed");
+        throw std::runtime_error("Create texture from file failed");
     }
 
     UINT srvIndex = framework->AllocateSrvDescriptor();

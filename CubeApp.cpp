@@ -53,7 +53,7 @@ void CubeApp::Initialize()
     };
 
     m_objects.push_back(Cube);
-    m_objects.push_back(Platform);
+    //m_objects.push_back(Platform);
 
     ThrowIfFailed(alloc->Reset());
     ThrowIfFailed(cmdList->Reset(alloc, nullptr));
@@ -68,7 +68,6 @@ void CubeApp::Initialize()
     ID3D12CommandList* lists[] = { cmdList };
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
-
     // CB
     {
         const UINT cbSize = (sizeof(CB) + 255) & ~255;
@@ -180,7 +179,7 @@ void CubeApp::Render()
     }
     m_constantBuffer->Unmap(0, nullptr);
 
-    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     {
         ID3D12DescriptorHeap* heaps[] = {

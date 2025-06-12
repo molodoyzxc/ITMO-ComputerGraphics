@@ -7,18 +7,20 @@
 #include <DirectXMath.h>
 #include <SimpleMath.h>
 
+using namespace DirectX::SimpleMath;
+
 class GAMEFRAMEWORK_API InputDevice
 {
 public:
     struct MouseMoveEventArgs
     {
-        DirectX::SimpleMath::Vector2 Position;
-        DirectX::SimpleMath::Vector2 Offset;
+        Vector2 Position;
+        Vector2 Offset;
         int WheelDelta;
     };
 
-    DirectX::SimpleMath::Vector2 MousePosition;
-    DirectX::SimpleMath::Vector2 MouseOffset;
+    Vector2 MousePosition;
+    Vector2 MouseOffset;
     int MouseWheelDelta;
 
     MulticastDelegate<const MouseMoveEventArgs&> MouseMove;
