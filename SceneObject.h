@@ -27,6 +27,33 @@ struct SceneObject {
     ComPtr<ID3D12Resource> texture;
     ComPtr<ID3D12Resource> textureUploadHeap;
 
+    SceneObject() = default;
+
+    SceneObject(const Mesh& m,
+        UINT matID,
+        DirectX::XMFLOAT3 pos,
+        DirectX::XMFLOAT3 rot,
+        DirectX::XMFLOAT3 scl)
+        : mesh(m)
+        , materialID(matID)
+        , position(pos)
+        , rotation(rot)
+        , scale(scl)
+    {
+    }
+
+    SceneObject(const Mesh& m,
+        DirectX::XMFLOAT3 pos,
+        DirectX::XMFLOAT3 rot,
+        DirectX::XMFLOAT3 scl)
+        : mesh(m)
+        , materialID(0)
+        , position(pos)
+        , rotation(rot)
+        , scale(scl)
+    {
+    }
+
     DirectX::XMMATRIX GetWorldMatrix() const {
         using namespace DirectX;
         return XMMatrixScaling(scale.x, scale.y, scale.z) *
