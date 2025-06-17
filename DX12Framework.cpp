@@ -34,7 +34,6 @@ void DX12Framework::Init()
     CreateDescriptorHeaps();    // кучи дескрипторов RTV/DSV
     CreateRenderTargetViews();  // RTV для бэкбуферов
     CreateDepthResources();     // буфер глубины
-    BuildDefaultResources();
 }
 
 // ID3D12Device
@@ -325,104 +324,5 @@ void DX12Framework::EndFrame()
     if (m_fence->GetCompletedValue() < fenceToWaitFor) {
         ThrowIfFailed(m_fence->SetEventOnCompletion(fenceToWaitFor, m_fenceEvent));
         WaitForSingleObject(m_fenceEvent, INFINITE);
-    }
-}
-
-
-void DX12Framework::BuildDefaultResources()
-{
-    ThrowIfFailed(m_commandAllocator->Reset());
-    ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), nullptr));
-
-    // 1×1 текстура
-    D3D12_RESOURCE_DESC texDesc = {};
-    texDesc.MipLevels = 1;
-    texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    texDesc.Width = 1;
-    texDesc.Height = 1;
-    texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    texDesc.DepthOrArraySize = 1;
-    texDesc.SampleDesc.Count = 1;
-    texDesc.SampleDesc.Quality = 0;
-    texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-
-    {
-        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
-        ThrowIfFailed(m_device->CreateCommittedResource(
-            &heapDefault,
-            D3D12_HEAP_FLAG_NONE,
-            &texDesc,
-            D3D12_RESOURCE_STATE_COPY_DEST,
-            nullptr,
-            IID_PPV_ARGS(&m_whiteTexture)
-        ));
-    }
-
-    UINT64 uploadSize = 0;
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
-    UINT numRows;
-    unsigned long long rowSize;
-    m_device->GetCopyableFootprints(
-        &texDesc,
-        0,
-        1,
-        0,
-        &layout,
-        &numRows,
-        &rowSize,
-        &uploadSize
-    );
-
-    {
-        CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
-        CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadSize);
-        ThrowIfFailed(m_device->CreateCommittedResource(
-            &heapUpload,
-            D3D12_HEAP_FLAG_NONE,
-            &bufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&m_whiteUploadBuffer)
-        ));
-    }
-
-    {
-        UINT8 whitePixel[4] = { 255, 255, 255, 255 };
-        D3D12_SUBRESOURCE_DATA subData = {};
-        subData.pData = whitePixel;
-        subData.RowPitch = 4;
-        subData.SlicePitch = 4;
-
-        UpdateSubresources(m_commandList.Get(), m_whiteTexture.Get(), m_whiteUploadBuffer.Get(), 0, 0, 1, &subData);
-
-        CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-            m_whiteTexture.Get(),
-            D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
-        );
-        m_commandList->ResourceBarrier(1, &barrier);
-    }
-
-    ThrowIfFailed(m_commandList->Close());
-    {
-        ID3D12CommandList* lists[] = { m_commandList.Get()};
-        m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
-    }
-    WaitForGpu();
-
-    {
-        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MipLevels = 1;
-
-        m_whiteSrvIndex = AllocateSrvDescriptor();
-        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(
-            m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
-            m_whiteSrvIndex,
-            m_srvDescriptorSize
-        );
-        m_device->CreateShaderResourceView(m_whiteTexture.Get(), &srvDesc, cpuHandle);
     }
 }

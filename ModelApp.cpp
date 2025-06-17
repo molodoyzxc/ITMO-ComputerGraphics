@@ -10,7 +10,14 @@
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
-struct CB { XMFLOAT4X4 WVP; XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor; XMFLOAT2 uvScale, uvOffset; };
+struct CB {
+    XMFLOAT4X4 WVP;
+    XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor;
+    XMFLOAT2 uvScale, uvOffset;
+    XMFLOAT4 Ka, Kd, Ks;
+    float Ns;
+    float pad[3];
+};
 
 static inline void ThrowIfFailed(HRESULT hr)
 {
@@ -23,7 +30,7 @@ ModelApp::ModelApp(DX12Framework* framework, InputDevice* input)
     , m_input(input)
     , m_pipeline(framework)
     , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // начальная позиция камеры
-    , m_lightX(0), m_lightY(-5), m_lightZ(-1)   // начальное направление света
+    , m_lightX(0), m_lightY(-5), m_lightZ(-2)   // начальное направление света
     , m_viewX(0), m_viewY(1), m_viewZ(0)
     , m_yaw(0), m_pitch(0)                       // углы поворота камеры
 {
@@ -39,13 +46,15 @@ void ModelApp::Initialize()
     CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
     Mesh mesh = ModelLoader::LoadGeometry("Assets\\cube.obj");
+    Material material;
 
     SceneObject Model = {
         mesh,
         {0,0,0,},
         {0,0,0,},
-        {1,1,1,},
+        {10,1,10,},
     };
+
 
     m_objects.push_back(Model);
 
@@ -67,7 +76,10 @@ void ModelApp::Initialize()
 
     for (auto& o : m_objects) {
         // ! передаем корректный uploadBatch, а не cmdList
-        o.LoadTexture(device, uploadBatch, m_framework, L"Textures\\texture.jpg");
+        std::string  narrow = o.material.diffuseTexPath;
+        std::wstring wide = std::wstring(narrow.begin(),narrow.end());
+        const wchar_t* name = wide.c_str();
+        o.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
     }
 
     // Записываем команды uploadBatch в cmdList
@@ -96,6 +108,14 @@ void ModelApp::Initialize()
 
 void ModelApp::Update(float dt)
 {
+    m_objects[0].rotation.y += 0.005f;
+    if (m_input->IsKeyDown(Keys::I)) m_objects[0].material.specular.x+=1.0f;
+    if (m_input->IsKeyDown(Keys::I)) m_objects[0].material.specular.y+=1.0f;
+    if (m_input->IsKeyDown(Keys::I)) m_objects[0].material.specular.z+=1.0f;
+    if (m_input->IsKeyDown(Keys::K)) m_objects[0].material.specular.x-=1.0f;
+    if (m_input->IsKeyDown(Keys::K)) m_objects[0].material.specular.y-=1.0f;
+    if (m_input->IsKeyDown(Keys::K)) m_objects[0].material.specular.z-=1.0f;
+
     const float rotationSpeed = 0.02f;
 
     if (m_input->IsKeyDown(Keys::Left))  m_yaw -= rotationSpeed;
@@ -187,6 +207,10 @@ void ModelApp::Render()
         cb.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
         cb.LightColor = { 1,1,1,0 };
         cb.Ambient = { 0.2f,0.2f,0.2f,0 };
+        cb.Ka = XMFLOAT4(m_objects[i].material.ambient.x, m_objects[i].material.ambient.y, m_objects[i].material.ambient.z,1.0f);
+        cb.Ks = XMFLOAT4(m_objects[i].material.specular.x, m_objects[i].material.specular.y, m_objects[i].material.specular.z,1.0f);
+        cb.Kd = XMFLOAT4(m_objects[i].material.diffuse.x, m_objects[i].material.diffuse.y, m_objects[i].material.diffuse.z,1.0f);
+        cb.Ns = m_objects[i].material.shininess;
 
         memcpy(pMappedData + i * cbSize, &cb, sizeof(cb));
     }

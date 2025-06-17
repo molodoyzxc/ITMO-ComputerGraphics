@@ -10,7 +10,6 @@ using namespace DirectX;
 struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<UINT32> indices;
-    INT64 materialID;
 };
 
 Mesh CreateCube();

@@ -3,6 +3,7 @@
 #include "d3dx12.h"
 #include <stdexcept>
 #include <WICTextureLoader.h>
+#include <fstream>
 
 static inline void ThrowIfFailed(HRESULT hr)
 {
@@ -133,4 +134,39 @@ void SceneObject::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
     device->CreateShaderResourceView(texture.Get(), &srvDesc, cpuHandle);
 
     materialID = srvIndex;
+}
+
+void SceneObject::LoadMaterial(const std::string& mtlFile, const std::string& materialName)
+{
+    std::ifstream in(mtlFile);
+    if (!in.is_open()) throw std::runtime_error("Не удалось открыть " + mtlFile);
+
+    Material mat;
+    std::string token, currentName;
+    bool inTarget = false;
+
+    while (in >> token) {
+        if (token == "newmtl") {
+            in >> currentName;
+            inTarget = (currentName == materialName);
+        }
+        else if (inTarget) {
+            if (token == "Ka") {
+                in >> mat.ambient.x >> mat.ambient.y >> mat.ambient.z;
+            }
+            else if (token == "Kd") {
+                in >> mat.diffuse.x >> mat.diffuse.y >> mat.diffuse.z;
+            }
+            else if (token == "Ks") {
+                in >> mat.specular.x >> mat.specular.y >> mat.specular.z;
+            }
+            else if (token == "Ns") {
+                in >> mat.shininess;
+            }
+            else if (token == "map_Kd") {
+                in >> mat.diffuseTexPath;
+            }
+        }
+    }
+    this->material = mat;
 }

@@ -16,7 +16,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();
 
-    IGameApp* app = new CubeApp(&framework, window.GetInput());
+    IGameApp* app = new ModelApp(&framework, window.GetInput());
     app->Initialize();
 
     Timer timer;    

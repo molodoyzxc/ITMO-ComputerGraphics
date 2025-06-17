@@ -12,6 +12,7 @@ struct SceneObject {
     std::vector<Mesh> meshes;
     Mesh mesh;
     UINT materialID = 0;
+    Material material;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> indexBuffer;
@@ -67,4 +68,5 @@ public:
         ResourceUploadBatch& uploadBatch,
         DX12Framework* framework,
         const wchar_t* filename);
+    void LoadMaterial(const std::string& mtlFile, const std::string& materialName);
 };

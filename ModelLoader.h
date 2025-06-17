@@ -1,6 +1,7 @@
 #pragma once
 #include "Meshes.h"
 #include <string>
+#include "Material.h"
 
 class ModelLoader {
 public:

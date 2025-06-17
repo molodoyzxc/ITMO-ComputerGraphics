@@ -14,7 +14,6 @@ Mesh ModelLoader::LoadGeometry(const std::string& objPath)
     bool ok = tinyobj::LoadObj(&attrib, &shapes, nullptr, &warn, &err, objPath.c_str(), nullptr);
 
     Mesh mesh;
-    mesh.materialID = -1;
 
     std::unordered_map<uint64_t, UINT32> uniqueVerts;
     uniqueVerts.reserve(shapes.size() * 3);
@@ -43,7 +42,7 @@ Mesh ModelLoader::LoadGeometry(const std::string& objPath)
                 if (idx.texcoord_index >= 0) {
                     v.uv = {
                       attrib.texcoords[2 * idx.texcoord_index + 0],
-                      attrib.texcoords[2 * idx.texcoord_index + 1]
+                      1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
                     };
                 }
                 UINT32 newIndex = static_cast<UINT32>(mesh.vertices.size());
