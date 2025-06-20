@@ -133,7 +133,7 @@ void SceneObject::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
 
     device->CreateShaderResourceView(texture.Get(), &srvDesc, cpuHandle);
 
-    materialID = srvIndex;
+    textureID = srvIndex;
 }
 
 void SceneObject::LoadMaterial(const std::string& mtlFile, const std::string& materialName)

@@ -157,12 +157,9 @@ void DX12Framework::CreateDescriptorHeaps()
     samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    samplerDesc.MipLODBias = 0;
-    samplerDesc.MaxAnisotropy = 1;
+    samplerDesc.MipLODBias = 0.0f;
+    samplerDesc.MaxAnisotropy = 16;
     samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-    samplerDesc.BorderColor[0] = samplerDesc.BorderColor[1]
-        = samplerDesc.BorderColor[2]
-        = samplerDesc.BorderColor[3] = 0.0f;
     samplerDesc.MinLOD = 0;
     samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
 

@@ -11,7 +11,7 @@ using namespace DirectX;
 using Microsoft::WRL::ComPtr;
 
 struct CB {
-    XMFLOAT4X4 WVP;
+    XMFLOAT4X4 World, WVP;
     XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor;
     XMFLOAT2 uvScale, uvOffset;
     XMFLOAT4 Ka, Kd, Ks;
@@ -30,8 +30,7 @@ ModelApp::ModelApp(DX12Framework* framework, InputDevice* input)
     , m_input(input)
     , m_pipeline(framework)
     , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // начальная позиция камеры
-    , m_lightX(0), m_lightY(-5), m_lightZ(-2)   // начальное направление света
-    , m_viewX(0), m_viewY(1), m_viewZ(0)
+    , m_lightX(0), m_lightY(-5), m_lightZ(2)   // начальное направление света
     , m_yaw(0), m_pitch(0)                       // углы поворота камеры
 {
 }
@@ -45,18 +44,27 @@ void ModelApp::Initialize()
     auto alloc = m_framework->GetCommandAllocator();
     CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
-    Mesh mesh = ModelLoader::LoadGeometry("Assets\\cube.obj");
+    Mesh mesh = ModelLoader::LoadGeometry("Assets\\12281_Container_v2_L2.obj");
     Material material;
 
     SceneObject Model = {
         mesh,
         {0,0,0,},
         {0,0,0,},
-        {10,1,10,},
+        {0.01f,0.01f,0.01f,},
     };
 
+    SceneObject Cube = {
+    CreateCube(),
+    {0,5,0,},
+    {0,0,0,},
+    {3.0f,3.0f,3.0f,},
+    };
+
+    Model.LoadMaterial("Assets\\12281_Container_v2_L2.mtl","12281_container");
 
     m_objects.push_back(Model);
+    m_objects.push_back(Cube);
 
     alloc->Reset();
     cmdList->Reset(alloc, nullptr);
@@ -70,19 +78,13 @@ void ModelApp::Initialize()
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
 
-    // 2) Теперь загружаем текстуру через ResourceUploadBatch:
+    // загрузка тесктур
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    for (auto& o : m_objects) {
-        // ! передаем корректный uploadBatch, а не cmdList
-        std::string  narrow = o.material.diffuseTexPath;
-        std::wstring wide = std::wstring(narrow.begin(),narrow.end());
-        const wchar_t* name = wide.c_str();
-        o.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
-    }
+    m_objects[0].LoadTexture(device, uploadBatch, m_framework, L"Assets\\12281_Container_diffuse.jpg");
+    m_objects[1].LoadTexture(device, uploadBatch, m_framework, L"Assets\\bricks.dds");
 
-    // Записываем команды uploadBatch в cmdList
     ThrowIfFailed(alloc->Reset());
     ThrowIfFailed(cmdList->Reset(alloc, nullptr));
 
@@ -108,13 +110,11 @@ void ModelApp::Initialize()
 
 void ModelApp::Update(float dt)
 {
-    m_objects[0].rotation.y += 0.005f;
-    if (m_input->IsKeyDown(Keys::I)) m_objects[0].material.specular.x+=1.0f;
-    if (m_input->IsKeyDown(Keys::I)) m_objects[0].material.specular.y+=1.0f;
-    if (m_input->IsKeyDown(Keys::I)) m_objects[0].material.specular.z+=1.0f;
-    if (m_input->IsKeyDown(Keys::K)) m_objects[0].material.specular.x-=1.0f;
-    if (m_input->IsKeyDown(Keys::K)) m_objects[0].material.specular.y-=1.0f;
-    if (m_input->IsKeyDown(Keys::K)) m_objects[0].material.specular.z-=1.0f;
+    if (m_input->IsKeyDown(Keys::L)) m_objects[0].rotation.y += 0.005f;
+    if (m_input->IsKeyDown(Keys::J)) m_objects[0].rotation.y -= 0.005f;
+
+    if (m_input->IsKeyDown(Keys::I)) m_objects[0].rotation.x += 0.005f;
+    if (m_input->IsKeyDown(Keys::K)) m_objects[0].rotation.x -= 0.005f;
 
     const float rotationSpeed = 0.02f;
 
@@ -172,7 +172,6 @@ void ModelApp::Render()
 
     m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetPipelineState());
 
-    // матрицы камеры (world * view * proj)
     CB cb;
     const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
     XMVECTOR forwardDir = XMVectorSet(
@@ -199,6 +198,7 @@ void ModelApp::Render()
     {
         const XMMATRIX world = m_objects[i].GetWorldMatrix();
         XMMATRIX wvp = world * view * proj;
+        XMStoreFloat4x4(&cb.World, world);
         XMStoreFloat4x4(&cb.WVP, wvp);
         XMStoreFloat4(&cb.EyePos, eye);
         cb.uvScale = DirectX::XMFLOAT2(1.0f, 1.0f);
@@ -235,7 +235,7 @@ void ModelApp::Render()
 
         CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
             m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            m_objects[i].materialID,
+            m_objects[i].textureID,
             m_framework->GetSrvDescriptorSize()
         );
         cmd->SetGraphicsRootDescriptorTable(1, texHandle);

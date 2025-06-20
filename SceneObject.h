@@ -11,7 +11,7 @@
 struct SceneObject {
     std::vector<Mesh> meshes;
     Mesh mesh;
-    UINT materialID = 0;
+    UINT textureID = 0;
     Material material;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexBuffer;
@@ -36,7 +36,7 @@ struct SceneObject {
         DirectX::XMFLOAT3 rot,
         DirectX::XMFLOAT3 scl)
         : mesh(m)
-        , materialID(matID)
+        , textureID(matID)
         , position(pos)
         , rotation(rot)
         , scale(scl)
@@ -48,7 +48,7 @@ struct SceneObject {
         DirectX::XMFLOAT3 rot,
         DirectX::XMFLOAT3 scl)
         : mesh(m)
-        , materialID(0)
+        , textureID(0)
         , position(pos)
         , rotation(rot)
         , scale(scl)

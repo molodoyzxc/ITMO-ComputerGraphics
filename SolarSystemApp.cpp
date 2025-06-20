@@ -127,7 +127,7 @@ void SolarSystemApp::Initialize()
 
     for (auto& obj : m_objects)
     {
-        obj.materialID = m_framework->GetWhiteTextureSrvIndex();
+        obj.textureID = m_framework->GetWhiteTextureSrvIndex();
         obj.CreateBuffers(device, cmdList);
     }
 
@@ -274,7 +274,7 @@ void SolarSystemApp::Render()
 
         CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
             m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            m_objects[i].materialID,
+            m_objects[i].textureID,
             m_framework->GetSrvDescriptorSize()
         );
         cmd->SetGraphicsRootDescriptorTable(1, texHandle);
