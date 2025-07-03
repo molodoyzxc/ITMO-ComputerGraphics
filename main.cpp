@@ -2,11 +2,6 @@
 #include "Window.h"
 #include "Timer.h"
 #include "DX12Framework.h"
-#include "CubeApp.h"
-#include "SolarSystemApp.h"
-#include "PingPongApp.h"
-#include "TestApp.h"
-#include "TexturedCubeApp.h"
 #include "ModelApp.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)

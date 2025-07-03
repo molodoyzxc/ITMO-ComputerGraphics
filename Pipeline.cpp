@@ -108,32 +108,73 @@ void Pipeline::Init()
         )
     );
 
-    // PSO
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-    psoDesc.InputLayout = { inputLayout, _countof(inputLayout) }; 
-    psoDesc.pRootSignature = m_rootSignature.Get();               
-    psoDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
-    psoDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+    // opaque PSO
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueDesc = {};
+    opaqueDesc.InputLayout = { inputLayout, _countof(inputLayout) }; 
+    opaqueDesc.pRootSignature = m_rootSignature.Get();               
+    opaqueDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
+    opaqueDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
 
     // состояние растеризатора
-    psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    psoDesc.RasterizerState.FrontCounterClockwise = FALSE;          
-    psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;         
-    psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    opaqueDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    opaqueDesc.RasterizerState.FrontCounterClockwise = FALSE;          
+    opaqueDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK ;  
 
+    // blend
+    opaqueDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+        
     // глубина и трафарет
-    psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    opaqueDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    opaqueDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    opaqueDesc.DepthStencilState.DepthEnable = TRUE;
+    opaqueDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
 
-    psoDesc.SampleMask = UINT_MAX;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    psoDesc.NumRenderTargets = 1;
-    psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM; // формат цветового буффреа
-    psoDesc.SampleDesc.Count = 1;
+    opaqueDesc.SampleMask = UINT_MAX;
+    opaqueDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    opaqueDesc.NumRenderTargets = 1;
+    opaqueDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM; // формат цветового буффреа
+    opaqueDesc.SampleDesc.Count = 1;
 
     // создание
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
-        &psoDesc,
-        IID_PPV_ARGS(&m_pipelineState)
+        &opaqueDesc, IID_PPV_ARGS(&m_opaquePSO)
+    ));
+
+    // transparent PSO
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC transparentDesc = {};
+    transparentDesc.InputLayout = { inputLayout, _countof(inputLayout) };
+    transparentDesc.pRootSignature = m_rootSignature.Get();
+    transparentDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
+    transparentDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+
+    transparentDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    transparentDesc.RasterizerState.FrontCounterClockwise = FALSE;
+    transparentDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+
+    // blending
+    D3D12_BLEND_DESC blendDesc = {};
+    blendDesc.RenderTarget[0].BlendEnable = TRUE;
+    blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+    blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+    blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+    blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+    blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    transparentDesc.BlendState = blendDesc;
+
+    transparentDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    transparentDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    transparentDesc.DepthStencilState.DepthEnable = TRUE;
+    transparentDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+
+    transparentDesc.SampleMask = UINT_MAX;
+    transparentDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    transparentDesc.NumRenderTargets = 1;
+    transparentDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    transparentDesc.SampleDesc.Count = 1;
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &transparentDesc, IID_PPV_ARGS(&m_transparentPSO)
     ));
 }

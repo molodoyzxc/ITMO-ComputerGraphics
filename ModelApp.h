@@ -33,5 +33,6 @@ private:
     float m_cameraX, m_cameraY, m_cameraZ;
     float m_lightX, m_lightY, m_lightZ;
     float m_yaw, m_pitch;
-    XMFLOAT4 m_cubeColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+
+    void KeyboardControl();
 };

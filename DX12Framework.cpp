@@ -115,7 +115,7 @@ void DX12Framework::CreateSwapChain()
     m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
 }
 
-// RTV и DSV дескрипторные кучи.
+// дескрипторные кучи.
 void DX12Framework::CreateDescriptorHeaps()
 {
     // RTV куча
@@ -139,7 +139,7 @@ void DX12Framework::CreateDescriptorHeaps()
     m_dsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
 
     D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
-    srvDesc.NumDescriptors = 100;
+    srvDesc.NumDescriptors = 2;
     srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&m_srvHeap)));
@@ -153,10 +153,11 @@ void DX12Framework::CreateDescriptorHeaps()
     m_samplerDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 
     D3D12_SAMPLER_DESC samplerDesc = {};
-    samplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    samplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    samplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    samplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplerDesc.Filter = D3D12_FILTER_ANISOTROPIC;
+    D3D12_TEXTURE_ADDRESS_MODE addressMode = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplerDesc.AddressU = addressMode;
+    samplerDesc.AddressV = addressMode;
+    samplerDesc.AddressW = addressMode;
     samplerDesc.MipLODBias = 0.0f;
     samplerDesc.MaxAnisotropy = 16;
     samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;

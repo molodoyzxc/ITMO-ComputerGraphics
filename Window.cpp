@@ -1,5 +1,4 @@
 ﻿#include "Window.h"
-#include "CubeApp.h"
 
 Window::Window(HINSTANCE hInstance, int nCmdShow,
     const std::wstring& title, int width, int height)

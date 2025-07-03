@@ -35,87 +35,7 @@ ModelApp::ModelApp(DX12Framework* framework, InputDevice* input)
 {
 }
 
-void ModelApp::Initialize()
-{
-    m_pipeline.Init();
-
-    auto* device = m_framework->GetDevice();
-    auto cmdList = m_framework->GetCommandList();
-    auto alloc = m_framework->GetCommandAllocator();
-    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
-
-    Mesh mesh = ModelLoader::LoadGeometry("Assets\\12281_Container_v2_L2.obj");
-    Material material;
-
-    SceneObject Model = {
-        mesh,
-        {0,0,0,},
-        {0,0,0,},
-        {0.01f,0.01f,0.01f,},
-    };
-
-    SceneObject Cube = {
-    CreateCube(),
-    {0,5,0,},
-    {0,0,0,},
-    {3.0f,3.0f,3.0f,},
-    };
-
-    Model.LoadMaterial("Assets\\12281_Container_v2_L2.mtl","12281_container");
-
-    m_objects.push_back(Model);
-    m_objects.push_back(Cube);
-
-    alloc->Reset();
-    cmdList->Reset(alloc, nullptr);
-
-    for (SceneObject& obj : m_objects) {
-        obj.CreateBuffers(device,cmdList);
-    }
-
-    ThrowIfFailed(cmdList->Close());
-    ID3D12CommandList* lists[] = { cmdList };
-    m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
-    m_framework->WaitForGpu();
-
-    // загрузка тесктур
-    DirectX::ResourceUploadBatch uploadBatch(device);
-    uploadBatch.Begin();
-
-    m_objects[0].LoadTexture(device, uploadBatch, m_framework, L"Assets\\12281_Container_diffuse.jpg");
-    m_objects[1].LoadTexture(device, uploadBatch, m_framework, L"Assets\\bricks.dds");
-
-    ThrowIfFailed(alloc->Reset());
-    ThrowIfFailed(cmdList->Reset(alloc, nullptr));
-
-    auto finish = uploadBatch.End(m_framework->GetCommandQueue());
-
-    ThrowIfFailed(cmdList->Close());
-    ID3D12CommandList* Clists[] = { cmdList };
-    m_framework->GetCommandQueue()->ExecuteCommandLists(1, Clists);
-    finish.wait();
-
-    // CB
-    {
-        const UINT cbSize = (sizeof(CB) + 255) & ~255;
-        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
-        const auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
-
-        ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload, D3D12_HEAP_FLAG_NONE, &cbDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-            IID_PPV_ARGS(&m_constantBuffer)));
-    }
-}
-
-void ModelApp::Update(float dt)
-{
-    if (m_input->IsKeyDown(Keys::L)) m_objects[0].rotation.y += 0.005f;
-    if (m_input->IsKeyDown(Keys::J)) m_objects[0].rotation.y -= 0.005f;
-
-    if (m_input->IsKeyDown(Keys::I)) m_objects[0].rotation.x += 0.005f;
-    if (m_input->IsKeyDown(Keys::K)) m_objects[0].rotation.x -= 0.005f;
-
+void ModelApp::KeyboardControl() {
     const float rotationSpeed = 0.02f;
 
     if (m_input->IsKeyDown(Keys::Left))  m_yaw -= rotationSpeed;
@@ -157,6 +77,112 @@ void ModelApp::Update(float dt)
     if (m_input->IsKeyDown(Keys::E)) m_cameraY += moveSpeed;
 }
 
+
+void ModelApp::Initialize()
+{
+    m_pipeline.Init();
+
+    auto* device = m_framework->GetDevice();
+    auto cmdList = m_framework->GetCommandList();
+    auto alloc = m_framework->GetCommandAllocator();
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+
+    Mesh mesh = ModelLoader::LoadGeometry("Assets\\sphere.obj");
+    Material material;
+
+    SceneObject Model = {
+        CreateCube(),
+        {1.0f,1.0f,1.0f,1.0f},
+        {0,0,0,},
+        {0,0,0,},
+        {2.0f,2.0f,2.0f,},
+    };
+
+    SceneObject Cube = {
+        CreateCube(),
+        {1.0f,1.0f,1.0f,1.0f},
+        {0,3,0,},
+        {0,0,0,},
+        {2.0f,2.0f,2.0f,},
+    };
+
+    SceneObject Right = {
+        CreateCube(),
+        {1.0f,1.0f,1.0f,0.8f,},
+        {5,0,0,},
+        {0,0,0,},
+        {1.0f,10.0f,10.0f,},
+    };
+    
+    SceneObject Left = {
+        CreateCube(),
+        {1.0f,1.0f,1.0f,0.8f,},
+        {-5,0,0,},
+        {0,0,0,},
+        {1.0f,10.0f,10.0f,},
+    };
+
+    //Model.LoadMaterial("Assets\\12248_Bird_v1_L2.mtl","12248_Bird_v1");
+
+    m_objects.push_back(Model);
+    m_objects.push_back(Cube);
+    m_objects.push_back(Right);
+    m_objects.push_back(Left);
+
+    alloc->Reset();
+    cmdList->Reset(alloc, nullptr);
+
+    for (SceneObject& obj : m_objects) {
+        obj.CreateBuffers(device,cmdList);
+    }
+
+    ThrowIfFailed(cmdList->Close());
+    ID3D12CommandList* lists[] = { cmdList };
+    m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
+    m_framework->WaitForGpu();
+
+    // загрузка тесктур
+    DirectX::ResourceUploadBatch uploadBatch(device);
+    uploadBatch.Begin();
+
+    m_objects[0].LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
+    //m_objects[1].LoadTexture(device, uploadBatch, m_framework, L"Assets\\texture.jpg");
+
+    ThrowIfFailed(alloc->Reset());
+    ThrowIfFailed(cmdList->Reset(alloc, nullptr));
+
+    auto finish = uploadBatch.End(m_framework->GetCommandQueue());
+
+    ThrowIfFailed(cmdList->Close());
+    ID3D12CommandList* Clists[] = { cmdList };
+    m_framework->GetCommandQueue()->ExecuteCommandLists(1, Clists);
+    finish.wait();
+
+    // CB
+    {
+        const UINT cbSize = (sizeof(CB) + 255) & ~255;
+        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
+        const auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &cbDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&m_constantBuffer)));
+    }
+}
+
+void ModelApp::Update(float dt)
+{
+    //m_objects[1].rotation.y += 0.01f;
+    if (m_input->IsKeyDown(Keys::I)) m_objects[0].position.y += 0.01f;
+    if (m_input->IsKeyDown(Keys::K)) m_objects[0].position.y -= 0.01f;
+
+    if (m_input->IsKeyDown(Keys::J)) m_objects[0].position.x -= 0.01f;
+    if (m_input->IsKeyDown(Keys::L)) m_objects[0].position.x += 0.01f;
+
+    KeyboardControl();
+}
+
 void ModelApp::Render()
 {
     auto* cmd = m_framework->GetCommandList();
@@ -170,7 +196,7 @@ void ModelApp::Render()
 
     m_framework->SetViewportAndScissors();
 
-    m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetPipelineState());
+    m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetOpaquePSO());
 
     CB cb;
     const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
@@ -203,7 +229,7 @@ void ModelApp::Render()
         XMStoreFloat4(&cb.EyePos, eye);
         cb.uvScale = DirectX::XMFLOAT2(1.0f, 1.0f);
         cb.uvOffset = DirectX::XMFLOAT2(0.0f, 0.0f);
-        cb.ObjectColor = m_cubeColor;
+        cb.ObjectColor = m_objects[i].Color;
         cb.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
         cb.LightColor = { 1,1,1,0 };
         cb.Ambient = { 0.2f,0.2f,0.2f,0 };
@@ -226,8 +252,13 @@ void ModelApp::Render()
         cmd->SetDescriptorHeaps(_countof(heaps), heaps);
     }
 
+    bool flag = true;
     for (UINT i = 0; i < m_objects.size(); ++i)
     {
+        if (flag && m_objects[i].Color.w != 1.0f) {
+            m_framework->GetCommandList()->SetPipelineState(m_pipeline.GetTransparentPSO());
+            flag = false;
+        }
         cmd->SetGraphicsRootConstantBufferView(
             0,
             m_constantBuffer->GetGPUVirtualAddress() + i * cbSize

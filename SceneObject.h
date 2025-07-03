@@ -11,6 +11,7 @@
 struct SceneObject {
     std::vector<Mesh> meshes;
     Mesh mesh;
+    XMFLOAT4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
     UINT textureID = 0;
     Material material;
 
@@ -31,12 +32,11 @@ struct SceneObject {
     SceneObject() = default;
 
     SceneObject(const Mesh& m,
-        UINT matID,
-        DirectX::XMFLOAT3 pos,
-        DirectX::XMFLOAT3 rot,
-        DirectX::XMFLOAT3 scl)
+        XMFLOAT3 pos,
+        XMFLOAT3 rot,
+        XMFLOAT3 scl)
         : mesh(m)
-        , textureID(matID)
+        , textureID(0)
         , position(pos)
         , rotation(rot)
         , scale(scl)
@@ -44,10 +44,12 @@ struct SceneObject {
     }
 
     SceneObject(const Mesh& m,
-        DirectX::XMFLOAT3 pos,
-        DirectX::XMFLOAT3 rot,
-        DirectX::XMFLOAT3 scl)
+        XMFLOAT4 color,
+        XMFLOAT3 pos,
+        XMFLOAT3 rot,
+        XMFLOAT3 scl)
         : mesh(m)
+        , Color(color)
         , textureID(0)
         , position(pos)
         , rotation(rot)
