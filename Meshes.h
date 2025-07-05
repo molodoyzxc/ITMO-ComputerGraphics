@@ -13,6 +13,7 @@ struct Mesh {
 };
 
 Mesh CreateCube();
+Mesh CreateFakeCube();
 Mesh CreateSphere(int slices = 20, int stacks = 20, float radius = 1.0f);
 Mesh CreateTestTriangle();
 Mesh CreatePlane();

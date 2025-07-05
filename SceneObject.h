@@ -14,6 +14,8 @@ struct SceneObject {
     XMFLOAT4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
     UINT textureID = 0;
     Material material;
+    XMFLOAT3 bsCenter;
+    float bsRadius;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> vertexBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> indexBuffer;

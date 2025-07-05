@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <math.h>
 #include "ModelLoader.h"
+#include "FrustumPlane.h"
 
 using namespace DirectX;
 using Microsoft::WRL::ComPtr;
@@ -106,6 +107,14 @@ void ModelApp::Initialize()
         {2.0f,2.0f,2.0f,},
     };
 
+    SceneObject FakeCube = {
+        CreateFakeCube(),
+        {1.0f,1.0f,1.0f,1.0f},
+        {5,3,0,},
+        {0,0,0,},
+        {2.0f,2.0f,2.0f,},
+    };
+
     SceneObject Right = {
         CreateCube(),
         {1.0f,1.0f,1.0f,0.8f,},
@@ -126,8 +135,20 @@ void ModelApp::Initialize()
 
     m_objects.push_back(Model);
     m_objects.push_back(Cube);
-    m_objects.push_back(Right);
-    m_objects.push_back(Left);
+    m_objects.push_back(FakeCube);
+    //m_objects.push_back(Right);
+    //m_objects.push_back(Left);
+
+    // culling test
+    //for (int i = 0; i < 5; i++) {
+    //    SceneObject tmp = {
+    //        CreateSphere(20,20,1),
+    //        { 0 + i * 5.0f, 0, 0, },
+    //        { 0, 0, 0, },
+    //        { 1.0f, 1.0f, 1.0f, },
+    //    };
+    //    m_objects.push_back(tmp);
+    //}
 
     alloc->Reset();
     cmdList->Reset(alloc, nullptr);
@@ -173,7 +194,7 @@ void ModelApp::Initialize()
 
 void ModelApp::Update(float dt)
 {
-    //m_objects[1].rotation.y += 0.01f;
+    m_objects[2].rotation.y += 0.01f;
     if (m_input->IsKeyDown(Keys::I)) m_objects[0].position.y += 0.01f;
     if (m_input->IsKeyDown(Keys::K)) m_objects[0].position.y -= 0.01f;
 
@@ -214,33 +235,72 @@ void ModelApp::Render()
     //float fov = 90.0f * XM_PI / 180.0f;
     float fov = XM_PIDIV4;
     const XMMATRIX proj = XMMatrixPerspectiveFovLH(fov, aspect, 0.1f, 500.f);
+    XMMATRIX viewProj = view * proj;
+    XMFLOAT4 frustumPlanes[6];
+    ExtractFrustumPlanes(frustumPlanes, viewProj);
 
     const UINT cbSize = (sizeof(cb) + 255) & ~255;
     BYTE* pMappedData = nullptr;
     CD3DX12_RANGE readRange(0, 0);
     ThrowIfFailed(m_constantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMappedData)));
 
+    m_visibleObjects.clear();
+
+    // visible objects
     for (UINT i = 0; i < m_objects.size(); ++i)
     {
         const XMMATRIX world = m_objects[i].GetWorldMatrix();
-        XMMATRIX wvp = world * view * proj;
+
+        const XMVECTOR localCenter = XMLoadFloat3(&m_objects[i].bsCenter);
+        const float localRadius = m_objects[i].bsRadius;
+
+        const XMVECTOR worldCenter = XMVector3Transform(localCenter, world);
+
+        const auto& scale = m_objects[i].scale;
+        const float scaleLength = sqrtf(scale.x * scale.x + scale.y * scale.y + scale.z * scale.z);
+        const float worldRadius = localRadius * scaleLength;
+
+        bool visible = true;
+        for (int p = 0; p < 6; ++p)
+        {
+            const XMVECTOR plane = XMLoadFloat4(&frustumPlanes[p]);
+            const float dist = XMVectorGetX(XMPlaneDotCoord(plane, worldCenter));
+            const float epsilon = 0.05f * worldRadius;
+            if (dist < -worldRadius + epsilon) {
+                visible = false;
+                break;
+            }
+        }
+
+        if (visible)
+            m_visibleObjects.push_back(&m_objects[i]);
+    }
+
+    for (UINT i = 0; i < m_visibleObjects.size(); ++i)
+    {
+        SceneObject* obj = m_visibleObjects[i];
+        XMMATRIX world = obj->GetWorldMatrix();
+        XMMATRIX wvp = world * viewProj;
+
         XMStoreFloat4x4(&cb.World, world);
         XMStoreFloat4x4(&cb.WVP, wvp);
         XMStoreFloat4(&cb.EyePos, eye);
-        cb.uvScale = DirectX::XMFLOAT2(1.0f, 1.0f);
-        cb.uvOffset = DirectX::XMFLOAT2(0.0f, 0.0f);
-        cb.ObjectColor = m_objects[i].Color;
+        cb.uvScale = XMFLOAT2(1.0f, 1.0f);
+        cb.uvOffset = XMFLOAT2(0.0f, 0.0f);
+        cb.ObjectColor = obj->Color;
         cb.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
         cb.LightColor = { 1,1,1,0 };
         cb.Ambient = { 0.2f,0.2f,0.2f,0 };
-        cb.Ka = XMFLOAT4(m_objects[i].material.ambient.x, m_objects[i].material.ambient.y, m_objects[i].material.ambient.z,1.0f);
-        cb.Ks = XMFLOAT4(m_objects[i].material.specular.x, m_objects[i].material.specular.y, m_objects[i].material.specular.z,1.0f);
-        cb.Kd = XMFLOAT4(m_objects[i].material.diffuse.x, m_objects[i].material.diffuse.y, m_objects[i].material.diffuse.z,1.0f);
-        cb.Ns = m_objects[i].material.shininess;
+        cb.Ka = XMFLOAT4(obj->material.ambient.x, obj->material.ambient.y, obj->material.ambient.z, 1.0f);
+        cb.Ks = XMFLOAT4(obj->material.specular.x, obj->material.specular.y, obj->material.specular.z, 1.0f);
+        cb.Kd = XMFLOAT4(obj->material.diffuse.x, obj->material.diffuse.y, obj->material.diffuse.z, 1.0f);
+        cb.Ns = obj->material.shininess;
 
         memcpy(pMappedData + i * cbSize, &cb, sizeof(cb));
     }
+
     m_constantBuffer->Unmap(0, nullptr);
+
 
     cmd->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -252,10 +312,16 @@ void ModelApp::Render()
         cmd->SetDescriptorHeaps(_countof(heaps), heaps);
     }
 
+    // output
+    char msgbuf[100];
+    sprintf_s(msgbuf, "Number of objects: %d\n", m_visibleObjects.size());
+    OutputDebugStringA(msgbuf);
+
     bool flag = true;
-    for (UINT i = 0; i < m_objects.size(); ++i)
+    for (UINT i = 0; i < m_visibleObjects.size(); ++i)
     {
-        if (flag && m_objects[i].Color.w != 1.0f) {
+
+        if (flag && m_visibleObjects[i]->Color.w != 1.0f) {
             m_framework->GetCommandList()->SetPipelineState(m_pipeline.GetTransparentPSO());
             flag = false;
         }
@@ -266,7 +332,7 @@ void ModelApp::Render()
 
         CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
             m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            m_objects[i].textureID,
+            m_visibleObjects[i]->textureID,
             m_framework->GetSrvDescriptorSize()
         );
         cmd->SetGraphicsRootDescriptorTable(1, texHandle);
@@ -277,11 +343,11 @@ void ModelApp::Render()
 
         cmd->SetGraphicsRootDescriptorTable(2, sampHandle);
 
-        cmd->IASetVertexBuffers(0, 1, &m_objects[i].vbView);
-        cmd->IASetIndexBuffer(&m_objects[i].ibView);
+        cmd->IASetVertexBuffers(0, 1, &m_visibleObjects[i]->vbView);
+        cmd->IASetIndexBuffer(&m_visibleObjects[i]->ibView);
 
         cmd->DrawIndexedInstanced(
-            static_cast<UINT>(m_objects[i].mesh.indices.size()),
+            static_cast<UINT>(m_visibleObjects[i]->mesh.indices.size()),
             1,
             0,
             0,

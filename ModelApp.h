@@ -27,6 +27,7 @@ private:
     Pipeline       m_pipeline;
 
     std::vector<SceneObject> m_objects;
+    std::vector<SceneObject*> m_visibleObjects;
 
     Microsoft::WRL::ComPtr<ID3D12Resource> m_constantBuffer;
 

@@ -102,6 +102,20 @@ void SceneObject::CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList*
     ibView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
     ibView.Format = DXGI_FORMAT_R32_UINT;
     ibView.SizeInBytes = ibSize;
+
+    DirectX::XMVECTOR vmin = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0);
+    DirectX::XMVECTOR vmax = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0);
+    for (auto& v : mesh.vertices) {
+        XMVECTOR pos = XMLoadFloat3(&v.Pos);
+        vmin = XMVectorMin(vmin, pos);
+        vmax = XMVectorMax(vmax, pos);
+    }
+    XMVECTOR center = 0.5f * (vmin + vmax);
+    XMVECTOR half = 0.5f * (vmax - vmin);
+    float radius = XMVectorGetX(XMVector3Length(half));
+
+    XMStoreFloat3(&bsCenter, center);
+    bsRadius = radius;
 }
 
 void SceneObject::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename)
