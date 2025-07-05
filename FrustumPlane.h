@@ -10,7 +10,7 @@ void ExtractFrustumPlanes(DirectX::XMFLOAT4 planes[6], const DirectX::XMMATRIX& 
     using namespace DirectX;
 
     XMFLOAT4X4 m;
-    XMStoreFloat4x4(&m, viewProj); // Копируем данные в обычную структуру
+    XMStoreFloat4x4(&m, viewProj);
 
     // Левая
     XMStoreFloat4(&planes[0], XMPlaneNormalize(XMVectorSet(

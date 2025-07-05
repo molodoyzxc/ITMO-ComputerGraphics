@@ -26,7 +26,7 @@ void Pipeline::Init()
 #endif
 
     HRESULT hr = D3DCompileFromFile(
-        L"TexturedShaders.hlsl",
+        L"Shaders.hlsl",
         nullptr, nullptr,
         "VSMain", "vs_5_0",
         compileFlags, 0,
@@ -41,7 +41,7 @@ void Pipeline::Init()
     }
 
     hr = D3DCompileFromFile(
-        L"TexturedShaders.hlsl",
+        L"Shaders.hlsl",
         nullptr, nullptr,
         "PSMain", "ps_5_0",
         compileFlags, 0,

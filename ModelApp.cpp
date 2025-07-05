@@ -79,6 +79,7 @@ void ModelApp::KeyboardControl() {
 }
 
 
+
 void ModelApp::Initialize()
 {
     m_pipeline.Init();
@@ -100,17 +101,9 @@ void ModelApp::Initialize()
     };
 
     SceneObject Cube = {
-        CreateCube(),
+        CreatePlane(),
         {1.0f,1.0f,1.0f,1.0f},
         {0,3,0,},
-        {0,0,0,},
-        {2.0f,2.0f,2.0f,},
-    };
-
-    SceneObject FakeCube = {
-        CreateFakeCube(),
-        {1.0f,1.0f,1.0f,1.0f},
-        {5,3,0,},
         {0,0,0,},
         {2.0f,2.0f,2.0f,},
     };
@@ -135,7 +128,6 @@ void ModelApp::Initialize()
 
     m_objects.push_back(Model);
     m_objects.push_back(Cube);
-    m_objects.push_back(FakeCube);
     //m_objects.push_back(Right);
     //m_objects.push_back(Left);
 
@@ -167,7 +159,7 @@ void ModelApp::Initialize()
     uploadBatch.Begin();
 
     m_objects[0].LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
-    //m_objects[1].LoadTexture(device, uploadBatch, m_framework, L"Assets\\texture.jpg");
+    m_objects[1].LoadTexture(device, uploadBatch, m_framework, L"Assets\\bonsaiko.png");
 
     ThrowIfFailed(alloc->Reset());
     ThrowIfFailed(cmdList->Reset(alloc, nullptr));
@@ -194,7 +186,13 @@ void ModelApp::Initialize()
 
 void ModelApp::Update(float dt)
 {
-    m_objects[2].rotation.y += 0.01f;
+    float dx = m_cameraX - m_objects[1].position.x;
+    float dz = m_cameraZ - m_objects[1].position.z;
+    m_objects[1].rotation.y = atan2f(dx, dz) + XM_PI;
+
+    m_objects[1].position = { cosf(1.0f * dt) * 10.0f, 0, sinf(1.0f * dt) * 10.0f, };
+
+    //m_objects[2].rotation.y += 0.01f;
     if (m_input->IsKeyDown(Keys::I)) m_objects[0].position.y += 0.01f;
     if (m_input->IsKeyDown(Keys::K)) m_objects[0].position.y -= 0.01f;
 
