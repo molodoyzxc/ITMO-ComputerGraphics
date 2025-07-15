@@ -49,7 +49,6 @@ public:
             throw std::runtime_error("SRV heap is full");
         return m_nextSrvDescriptor++;
     }
-    void BuildDefaultResources();
     UINT GetWhiteTextureSrvIndex() const { return m_whiteSrvIndex; }
 
 

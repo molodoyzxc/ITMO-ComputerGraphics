@@ -17,19 +17,16 @@ struct SceneObject {
     XMFLOAT3 bsCenter;
     float bsRadius;
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> vertexBuffer;
-    Microsoft::WRL::ComPtr<ID3D12Resource> indexBuffer;
-    Microsoft::WRL::ComPtr<ID3D12Resource> vertexBufferUpload;
-    Microsoft::WRL::ComPtr<ID3D12Resource> indexBufferUpload;
+    ComPtr<ID3D12Resource> vertexBuffer;
+    ComPtr<ID3D12Resource> indexBuffer;
+    ComPtr<ID3D12Resource> vertexBufferUpload;
+    ComPtr<ID3D12Resource> indexBufferUpload;
     D3D12_VERTEX_BUFFER_VIEW vbView;
     D3D12_INDEX_BUFFER_VIEW  ibView;
 
-    DirectX::XMFLOAT3 position;   
-    DirectX::XMFLOAT3 rotation;    
-    DirectX::XMFLOAT3 scale;       
-
-    ComPtr<ID3D12Resource> texture;
-    ComPtr<ID3D12Resource> textureUploadHeap;
+    XMFLOAT3 position;   
+    XMFLOAT3 rotation;    
+    XMFLOAT3 scale;
 
     SceneObject() = default;
 
@@ -67,10 +64,4 @@ struct SceneObject {
     }
 public:
     void CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList);
-    void LoadTexture(
-        ID3D12Device* device,
-        ResourceUploadBatch& uploadBatch,
-        DX12Framework* framework,
-        const wchar_t* filename);
-    void LoadMaterial(const std::string& mtlFile, const std::string& materialName);
 };

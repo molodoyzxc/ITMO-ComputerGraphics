@@ -2,7 +2,7 @@
 #include "Window.h"
 #include "Timer.h"
 #include "DX12Framework.h"
-#include "ModelApp.h"
+#include "RenderingSystem.h"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
@@ -11,18 +11,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();
 
-    IGameApp* app = new ModelApp(&framework, window.GetInput());
-    app->Initialize();
+    RenderingSystem system(&framework, window.GetInput());
+    system.Initialize();
 
     Timer timer;    
 
     while (window.ProcessMessages())
     {
         timer.Tick();
-        app->Update(timer.GetTotalSeconds());
-        app->Render();
+        system.Update(timer.GetTotalSeconds());
+        system.Render();
     }
 
-    delete app;
     return 0;
 }
