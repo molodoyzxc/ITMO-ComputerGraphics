@@ -18,7 +18,7 @@ static inline void ThrowIfFailed(HRESULT hr)
 }
 
 void RenderingSystem::KeyboardControl() {
-    const float rotationSpeed = 0.02f;
+    const float rotationSpeed = 0.05f;
 
     if (m_input->IsKeyDown(Keys::Left))  m_yaw -= rotationSpeed;
     if (m_input->IsKeyDown(Keys::Right)) m_yaw += rotationSpeed;
@@ -116,10 +116,14 @@ void RenderingSystem::SetObjects() {
 
     //Model.LoadMaterial("Assets\\12248_Bird_v1_L2.mtl","12248_Bird_v1");
 
-    m_objects.push_back(Model);
-    m_objects.push_back(Cube);
-    m_objects.push_back(Right);
-    m_objects.push_back(Left);
+    //m_objects.push_back(Model);
+    //m_objects.push_back(Cube);
+    //m_objects.push_back(Right);
+    //m_objects.push_back(Left);
+    m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
+    for (SceneObject& obj : m_objects) {
+        obj.scale = { 0.1f,0.1f,0.1f, };
+    }
 
     // culling test
     //for (int i = 0; i < 5; i++) {
@@ -242,7 +246,7 @@ void RenderingSystem::Render()
     float aspect = m_framework->GetWidth() / m_framework->GetHeight();
     //float fov = 90.0f * XM_PI / 180.0f;
     float fov = XM_PIDIV4;
-    const XMMATRIX proj = XMMatrixPerspectiveFovLH(fov, aspect, 0.1f, 500.f);
+    const XMMATRIX proj = XMMatrixPerspectiveFovLH(fov, aspect, 0.1f, 5000.f);
     XMMATRIX viewProj = view * proj;
     XMFLOAT4 frustumPlanes[6];
     ExtractFrustumPlanes(frustumPlanes, viewProj);

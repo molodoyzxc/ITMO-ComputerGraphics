@@ -9,6 +9,8 @@
 #include "d3dx12.h"  
 #include <DirectXTex.h>
 #include <filesystem>
+#include "SceneObject.h"
+#include <vector>
 
 Mesh AssetLoader::LoadGeometry(const std::string& objPath)
 {
@@ -107,12 +109,10 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
     std::wstring ext = std::filesystem::path(filename).extension().wstring();
     if (_wcsicmp(ext.c_str(), L".tga") == 0)
     {
-        // 1) Загрузить TGA в ScratchImage
         DirectX::ScratchImage scratch;
         hr = DirectX::LoadFromTGAFile(filename, nullptr, scratch);
         if (FAILED(hr)) throw std::runtime_error("LoadFromTGAFile failed");
 
-        // 2) Создать пустой ID3D12Resource
         auto meta = scratch.GetMetadata();
         hr = DirectX::CreateTexture(
             device,
@@ -121,7 +121,6 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
         );
         if (FAILED(hr)) throw std::runtime_error("CreateTexture failed");
 
-        // 3) Подготовить D3D12_SUBRESOURCE_DATA для каждой мип‑уровни
         const auto* imgs = scratch.GetImages();
         size_t imgCount = scratch.GetImageCount();
         std::vector<D3D12_SUBRESOURCE_DATA> subresources;
@@ -135,8 +134,6 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
             subresources.push_back(d);
         }
 
-        // 4) Загрузить данные в GPU через uploadBatch
-        //    второй параметр – стартовый субресурс (0), четвёртый – их число
         uploadBatch.Upload(
             texture.Get(),
             0,
@@ -144,7 +141,6 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
             static_cast<UINT>(subresources.size())
         );
 
-        // 5) Перевести ресурс в состояние PIXEL_SHADER_RESOURCE
         uploadBatch.Transition(
             texture.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST,
@@ -180,4 +176,103 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
     device->CreateShaderResourceView(texture.Get(), &srvDesc, cpuHandle);
 
     textures.push_back(texture);
+}
+
+std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPath) {
+    // 1) Парсим .obj (без привязки материалов)
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t>   shapes;
+    std::vector<tinyobj::material_t> materials;  // нам лишь для счётчика M
+    std::string warn, err;
+    std::string baseDir = std::filesystem::path(objPath).parent_path().string();
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
+        objPath.c_str(), baseDir.c_str())) {
+        throw std::runtime_error("TinyObjLoader error: " + warn + err);
+    }
+
+    // 2) Создаём по одному Mesh на каждый материал из файла
+    size_t M = materials.size();
+    std::vector<Mesh> meshPerMat(M);
+    // Для устранения дублирования вершин — map из ключа → индекс
+    std::vector<std::unordered_map<uint64_t, uint32_t>> uniqueVertMaps(M);
+
+    // 3) Группируем вершины по граням и material_id
+    for (auto& shape : shapes) {
+        auto& fvCounts = shape.mesh.num_face_vertices;
+        auto& matIds = shape.mesh.material_ids;
+        auto& idxs = shape.mesh.indices;
+
+        size_t indexOffset = 0;
+        for (size_t f = 0; f < fvCounts.size(); ++f) {
+            int rawMatId = (f < matIds.size() ? matIds[f] : -1);
+            int mid = (rawMatId >= 0 && rawMatId < (int)M) ? rawMatId : 0;
+            auto& mesh = meshPerMat[mid];
+            auto& umap = uniqueVertMaps[mid];
+
+            // каждая грань может быть треугольником или полигонами
+            for (size_t v = 0; v < fvCounts[f]; ++v) {
+                const auto& idx = idxs[indexOffset + v];
+                uint64_t key = (uint64_t(idx.vertex_index + 1) << 42)
+                    | (uint64_t(idx.texcoord_index + 1) << 21)
+                    | uint64_t(idx.normal_index + 1);
+
+                uint32_t newIndex;
+                auto it = umap.find(key);
+                if (it == umap.end()) {
+                    Vertex vert{};
+                    // позиция
+                    vert.Pos = {
+                        attrib.vertices[3 * idx.vertex_index + 0],
+                        attrib.vertices[3 * idx.vertex_index + 1],
+                        attrib.vertices[3 * idx.vertex_index + 2]
+                    };
+                    // нормаль, если есть
+                    if (idx.normal_index >= 0) {
+                        vert.Normal = {
+                            attrib.normals[3 * idx.normal_index + 0],
+                            attrib.normals[3 * idx.normal_index + 1],
+                            attrib.normals[3 * idx.normal_index + 2]
+                        };
+                    }
+                    // UV, если есть
+                    if (idx.texcoord_index >= 0) {
+                        vert.uv = {
+                            attrib.texcoords[2 * idx.texcoord_index + 0],
+                            1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
+                        };
+                    }
+                    newIndex = static_cast<uint32_t>(mesh.vertices.size());
+                    mesh.vertices.push_back(vert);
+                    umap[key] = newIndex;
+                }
+                else {
+                    newIndex = it->second;
+                }
+                mesh.indices.push_back(newIndex);
+            }
+            indexOffset += fvCounts[f];
+        }
+    }
+
+    // 4) Собираем вектор SceneObject'ов (с пустыми материалами/текстурами)
+    std::vector<SceneObject> sceneObjects;
+    sceneObjects.reserve(M);
+    for (size_t i = 0; i < M; ++i) {
+        if (meshPerMat[i].indices.empty())
+            continue;
+
+        // SceneObject(mesh, позиция, ротация, масштаб)
+        SceneObject obj(
+            meshPerMat[i],
+            { 0.0f, 0.0f, 0.0f },  // позиция
+            { 0.0f, 0.0f, 0.0f },  // ротация
+            { 1.0f, 1.0f, 1.0f }   // масштаб
+        );
+
+        // оставляем obj.material и obj.textureID по умолчанию
+        sceneObjects.push_back(std::move(obj));
+    }
+
+    return sceneObjects;
 }
