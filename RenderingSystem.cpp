@@ -80,6 +80,7 @@ void RenderingSystem::SetObjects() {
         {0,0,0,},
         {2.0f,2.0f,2.0f,},
     };
+    Model.textureID = 5;
 
     SceneObject Cube = {
         CreateCube(),
@@ -132,6 +133,7 @@ void RenderingSystem::LoadTextures()
         L"Assets\\texture.jpg",
         L"Assets\\bonsaiko.png",
         L"Assets\\bigtree.png",
+        L"Assets\\Sponza\\lion.tga",
     };
 
     ID3D12Device* device = m_framework->GetDevice();

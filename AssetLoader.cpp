@@ -1,10 +1,14 @@
-#include "AssetLoader.h"
+﻿#include "AssetLoader.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 #include <unordered_map>
 #include <WICTextureLoader.h>
 #include "DX12Framework.h"
+#include <d3d12.h>
+#include "d3dx12.h"  
+#include <DirectXTex.h>
+#include <filesystem>
 
 Mesh AssetLoader::LoadGeometry(const std::string& objPath)
 {
@@ -63,7 +67,7 @@ Mesh AssetLoader::LoadGeometry(const std::string& objPath)
 Material AssetLoader::LoadMaterial(const std::string& mtlFile, const std::string& materialName)
 {
     std::ifstream in(mtlFile);
-    if (!in.is_open()) throw std::runtime_error("�� ������� ������� " + mtlFile);
+    if (!in.is_open()) throw std::runtime_error("не удалось открыть " + mtlFile);
 
     Material mat;
     std::string token, currentName;
@@ -97,18 +101,66 @@ Material AssetLoader::LoadMaterial(const std::string& mtlFile, const std::string
 
 void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename)
 {
+    HRESULT hr = S_OK;
     ComPtr<ID3D12Resource> texture;
-    ComPtr<ID3D12Resource> textureUploadHeap;
 
-    HRESULT hr = DirectX::CreateWICTextureFromFile(
-        device,
-        uploadBatch,
-        filename,
-        texture.ReleaseAndGetAddressOf(),
-        textureUploadHeap.ReleaseAndGetAddressOf()
-    );
-    if (FAILED(hr)) {
-        throw std::runtime_error("Create texture from file failed");
+    std::wstring ext = std::filesystem::path(filename).extension().wstring();
+    if (_wcsicmp(ext.c_str(), L".tga") == 0)
+    {
+        // 1) Загрузить TGA в ScratchImage
+        DirectX::ScratchImage scratch;
+        hr = DirectX::LoadFromTGAFile(filename, nullptr, scratch);
+        if (FAILED(hr)) throw std::runtime_error("LoadFromTGAFile failed");
+
+        // 2) Создать пустой ID3D12Resource
+        auto meta = scratch.GetMetadata();
+        hr = DirectX::CreateTexture(
+            device,
+            meta,
+            texture.ReleaseAndGetAddressOf()
+        );
+        if (FAILED(hr)) throw std::runtime_error("CreateTexture failed");
+
+        // 3) Подготовить D3D12_SUBRESOURCE_DATA для каждой мип‑уровни
+        const auto* imgs = scratch.GetImages();
+        size_t imgCount = scratch.GetImageCount();
+        std::vector<D3D12_SUBRESOURCE_DATA> subresources;
+        subresources.reserve(imgCount);
+        for (size_t i = 0; i < imgCount; ++i)
+        {
+            D3D12_SUBRESOURCE_DATA d = {};
+            d.pData = imgs[i].pixels;
+            d.RowPitch = imgs[i].rowPitch;
+            d.SlicePitch = imgs[i].slicePitch;
+            subresources.push_back(d);
+        }
+
+        // 4) Загрузить данные в GPU через uploadBatch
+        //    второй параметр – стартовый субресурс (0), четвёртый – их число
+        uploadBatch.Upload(
+            texture.Get(),
+            0,
+            subresources.data(),
+            static_cast<UINT>(subresources.size())
+        );
+
+        // 5) Перевести ресурс в состояние PIXEL_SHADER_RESOURCE
+        uploadBatch.Transition(
+            texture.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        );
+    }
+    else {
+        hr = DirectX::CreateWICTextureFromFile(
+            device,
+            uploadBatch,
+            filename,
+            texture.ReleaseAndGetAddressOf()
+        );
+        if (FAILED(hr)) {
+            throw std::runtime_error("Create texture from file failed");
+        }
     }
 
     auto desc = texture->GetDesc();
@@ -128,5 +180,4 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
     device->CreateShaderResourceView(texture.Get(), &srvDesc, cpuHandle);
 
     textures.push_back(texture);
-    texturesUploadHeaps.push_back(textureUploadHeap);
 }
