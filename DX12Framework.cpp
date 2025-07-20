@@ -139,7 +139,7 @@ void DX12Framework::CreateDescriptorHeaps()
     m_dsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
 
     D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
-    srvDesc.NumDescriptors = 10;
+    srvDesc.NumDescriptors = 100;
     srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&m_srvHeap)));

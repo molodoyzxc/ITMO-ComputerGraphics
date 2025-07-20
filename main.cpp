@@ -6,7 +6,7 @@
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
-    Window window(hInstance, nCmdShow, L"DirectX12", 1280.0f, 720.0f);
+    Window window(hInstance, nCmdShow, L"DirectX12", 1920.0f, 1080.0f);
 
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();

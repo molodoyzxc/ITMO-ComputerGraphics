@@ -1,6 +1,7 @@
 #include "RenderingSystem.h"
 #include "AssetLoader.h"
 #include "FrustumPlane.h"
+#include <filesystem>
 
 struct CB {
     XMFLOAT4X4 World, WVP;
@@ -139,26 +140,35 @@ void RenderingSystem::SetObjects() {
 
 void RenderingSystem::LoadTextures() 
 {
-    std::vector<const wchar_t*> textures =
-    {
-        L"Assets\\bricks.dds",
-        L"Assets\\texture.jpg",
-        L"Assets\\bonsaiko.png",
-        L"Assets\\bigtree.png",
-        L"Assets\\Sponza\\lion.tga",
-    };
-
     ID3D12Device* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
+
+    std::filesystem::path sceneObjPath = "Assets\\Sponza\\sponza.obj";
+    std::filesystem::path sceneFolder = sceneObjPath.parent_path();
 
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
     loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
 
-    for (auto& texture : textures) {
-        loader.LoadTexture(device, uploadBatch, m_framework, texture);
+    int index = 1;
+    for (auto& obj : m_objects) {
+        const std::string& relTex = obj.material.diffuseTexPath;
+        if (relTex.empty()) {
+            obj.textureID = 0;
+        }
+        else {
+            std::filesystem::path texName = std::filesystem::path(relTex).filename();
+            std::filesystem::path fullPath = sceneFolder / texName;
+            obj.textureID = index++;
+            loader.LoadTexture(
+                device,
+                uploadBatch,
+                m_framework,
+                fullPath.wstring().c_str()
+            );
+        }
     }
 
     auto finish = uploadBatch.End(m_framework->GetCommandQueue());
@@ -208,9 +218,9 @@ void RenderingSystem::Update(float dt)
     if (m_input->IsKeyDown(Keys::K)) 
     {
         m_objects[0].textureID = 4;
-        m_objects[1].textureID = 1;
-        m_objects[2].textureID = 2;
-        m_objects[3].textureID = 3;
+        m_objects[1].textureID = 3;
+        m_objects[2].textureID = 1;
+        m_objects[3].textureID = 2;
     }
 
     KeyboardControl();

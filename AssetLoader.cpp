@@ -179,25 +179,23 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
 }
 
 std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPath) {
-    // 1) Парсим .obj (без привязки материалов)
-    tinyobj::attrib_t attrib;
-    std::vector<tinyobj::shape_t>   shapes;
-    std::vector<tinyobj::material_t> materials;  // нам лишь для счётчика M
-    std::string warn, err;
-    std::string baseDir = std::filesystem::path(objPath).parent_path().string();
+    tinyobj::attrib_t                attrib;
+    std::vector<tinyobj::shape_t>    shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string                      warn, err;
+    std::string baseDir = std::filesystem::path(objPath)
+        .parent_path()
+        .string();
 
     if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
         objPath.c_str(), baseDir.c_str())) {
         throw std::runtime_error("TinyObjLoader error: " + warn + err);
     }
 
-    // 2) Создаём по одному Mesh на каждый материал из файла
     size_t M = materials.size();
     std::vector<Mesh> meshPerMat(M);
-    // Для устранения дублирования вершин — map из ключа → индекс
     std::vector<std::unordered_map<uint64_t, uint32_t>> uniqueVertMaps(M);
 
-    // 3) Группируем вершины по граням и material_id
     for (auto& shape : shapes) {
         auto& fvCounts = shape.mesh.num_face_vertices;
         auto& matIds = shape.mesh.material_ids;
@@ -207,10 +205,10 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         for (size_t f = 0; f < fvCounts.size(); ++f) {
             int rawMatId = (f < matIds.size() ? matIds[f] : -1);
             int mid = (rawMatId >= 0 && rawMatId < (int)M) ? rawMatId : 0;
-            auto& mesh = meshPerMat[mid];
+
+            Mesh& mesh = meshPerMat[mid];
             auto& umap = uniqueVertMaps[mid];
 
-            // каждая грань может быть треугольником или полигонами
             for (size_t v = 0; v < fvCounts[f]; ++v) {
                 const auto& idx = idxs[indexOffset + v];
                 uint64_t key = (uint64_t(idx.vertex_index + 1) << 42)
@@ -221,13 +219,11 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
                 auto it = umap.find(key);
                 if (it == umap.end()) {
                     Vertex vert{};
-                    // позиция
                     vert.Pos = {
                         attrib.vertices[3 * idx.vertex_index + 0],
                         attrib.vertices[3 * idx.vertex_index + 1],
                         attrib.vertices[3 * idx.vertex_index + 2]
                     };
-                    // нормаль, если есть
                     if (idx.normal_index >= 0) {
                         vert.Normal = {
                             attrib.normals[3 * idx.normal_index + 0],
@@ -235,7 +231,6 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
                             attrib.normals[3 * idx.normal_index + 2]
                         };
                     }
-                    // UV, если есть
                     if (idx.texcoord_index >= 0) {
                         vert.uv = {
                             attrib.texcoords[2 * idx.texcoord_index + 0],
@@ -255,22 +250,27 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         }
     }
 
-    // 4) Собираем вектор SceneObject'ов (с пустыми материалами/текстурами)
     std::vector<SceneObject> sceneObjects;
     sceneObjects.reserve(M);
+
     for (size_t i = 0; i < M; ++i) {
         if (meshPerMat[i].indices.empty())
             continue;
 
-        // SceneObject(mesh, позиция, ротация, масштаб)
         SceneObject obj(
             meshPerMat[i],
-            { 0.0f, 0.0f, 0.0f },  // позиция
-            { 0.0f, 0.0f, 0.0f },  // ротация
-            { 1.0f, 1.0f, 1.0f }   // масштаб
+            { 0.0f,0.0f,0.0f },
+            { 0.0f,0.0f,0.0f },
+            { 1.0f,1.0f,1.0f }
         );
 
-        // оставляем obj.material и obj.textureID по умолчанию
+        const auto& m = materials[i];
+        obj.material.ambient = { m.ambient[0],   m.ambient[1],   m.ambient[2] };
+        obj.material.diffuse = { m.diffuse[0],   m.diffuse[1],   m.diffuse[2] };
+        obj.material.specular = { m.specular[0],  m.specular[1],  m.specular[2] };
+        obj.material.shininess = m.shininess;
+        obj.material.diffuseTexPath = m.diffuse_texname;
+
         sceneObjects.push_back(std::move(obj));
     }
 

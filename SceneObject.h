@@ -9,7 +9,6 @@
 #include <ResourceUploadBatch.h>
 
 struct SceneObject {
-    std::vector<Mesh> meshes;
     Mesh mesh;
     XMFLOAT4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
     UINT textureID = 0;
