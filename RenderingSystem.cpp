@@ -32,7 +32,15 @@ void RenderingSystem::KeyboardControl() {
     XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
     XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
-    const float moveSpeed = 0.1f;
+    float acceleration;
+    if (m_input->IsKeyDown(Keys::LeftShift)) {
+        acceleration = 3.0f;
+    }
+    else {
+        acceleration = 1.0f;
+    }
+
+    const float moveSpeed = 0.1f * acceleration;
 
     if (m_input->IsKeyDown(Keys::W)) {
         XMVECTOR move = XMVectorScale(forward, moveSpeed);
