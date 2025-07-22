@@ -32,9 +32,11 @@ public:
     }
 
     ID3D12DescriptorHeap* GetSrvHeap() const { return m_srvHeap.Get(); }
+    ID3D12DescriptorHeap* GetRtvHeap() const { return m_rtvHeap.Get(); }
     ID3D12DescriptorHeap* GetSamplerHeap() const { return m_samplerHeap.Get(); }
     UINT GetSrvDescriptorSize() const { return m_srvDescriptorSize; }
     UINT GetSamplerDescriptorSize() const { return m_samplerDescriptorSize; }
+    UINT GetRtvDescriptorSize() const { return m_rtvDescriptorSize; }
     float GetWidth() const { return m_width; };
     float GetHeight() const { return m_height; };
 
