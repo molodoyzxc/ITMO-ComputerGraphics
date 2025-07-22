@@ -3,6 +3,7 @@
 #include <d3d12.h>
 
 class DX12Framework;
+using Microsoft::WRL::ComPtr;
 
 class Pipeline
 {
@@ -16,10 +17,20 @@ public:
     ID3D12PipelineState* GetOpaquePSO()    const { return m_opaquePSO.Get(); }
     ID3D12PipelineState* GetTransparentPSO()    const { return m_transparentPSO.Get(); }
 
+    ID3D12PipelineState* GetGBufferPSO()    const { return m_gBufferPSO.Get(); }
+    ID3D12RootSignature* GetDeferredRS()   const { return m_deferredRootSig.Get(); }
+    ID3D12PipelineState* GetDeferredPSO()  const { return m_deferredPSO.Get(); }
+
+
 private:
     DX12Framework* m_framework;
 
-    Microsoft::WRL::ComPtr<ID3D12RootSignature> m_rootSignature;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_opaquePSO;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_transparentPSO;
+    ComPtr<ID3D12RootSignature> m_rootSignature;
+    ComPtr<ID3D12PipelineState> m_opaquePSO;
+    ComPtr<ID3D12PipelineState> m_transparentPSO;
+
+    ComPtr<ID3D12PipelineState> m_gBufferPSO;
+    ComPtr<ID3D12RootSignature> m_deferredRootSig;
+    ComPtr<ID3D12PipelineState> m_deferredPSO;
+
 };

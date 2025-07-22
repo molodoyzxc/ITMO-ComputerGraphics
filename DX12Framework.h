@@ -51,6 +51,7 @@ public:
             throw std::runtime_error("SRV heap is full");
         return m_nextSrvDescriptor++;
     }
+    UINT AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count);
     UINT GetWhiteTextureSrvIndex() const { return m_whiteSrvIndex; }
 
 

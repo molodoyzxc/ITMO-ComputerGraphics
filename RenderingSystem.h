@@ -8,6 +8,7 @@
 #include "SceneObject.h"
 #include "IGameApp.h"
 #include "AssetLoader.h"
+#include "GBuffer.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -27,11 +28,13 @@ private:
     InputDevice* m_input;
     Pipeline       m_pipeline;
     AssetLoader loader;
+    std::unique_ptr<GBuffer> m_gbuffer;
 
     std::vector<SceneObject> m_objects;
     std::vector<SceneObject*> m_visibleObjects;
 
     ComPtr<ID3D12Resource> m_constantBuffer;
+    ComPtr<ID3D12Resource> m_lightBuffer;
 
     float m_cameraX, m_cameraY, m_cameraZ;
     float m_lightX, m_lightY, m_lightZ;

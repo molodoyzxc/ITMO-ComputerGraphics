@@ -36,6 +36,8 @@ void DX12Framework::Init()
     CreateDepthResources();     // буфер глубины
 }
 
+
+
 // ID3D12Device
 void DX12Framework::CreateDevice()
 {
@@ -120,7 +122,7 @@ void DX12Framework::CreateDescriptorHeaps()
 {
     // RTV куча
     D3D12_DESCRIPTOR_HEAP_DESC rtvDesc = {};
-    rtvDesc.NumDescriptors = FrameCount;
+    rtvDesc.NumDescriptors = FrameCount + 3;
     rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     ThrowIfFailed(m_device->CreateDescriptorHeap(
         &rtvDesc, IID_PPV_ARGS(&m_rtvHeap)));
@@ -323,4 +325,15 @@ void DX12Framework::EndFrame()
         ThrowIfFailed(m_fence->SetEventOnCompletion(fenceToWaitFor, m_fenceEvent));
         WaitForSingleObject(m_fenceEvent, INFINITE);
     }
+}
+
+UINT DX12Framework::AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count) {
+    if (type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+         throw std::runtime_error("AllocateDescriptors: unsupported heap type");
+    UINT heapSize = m_srvHeap->GetDesc().NumDescriptors;
+    if (m_nextSrvDescriptor + count > heapSize)
+         throw std::runtime_error("AllocateDescriptors: not enough descriptors");
+    UINT start = m_nextSrvDescriptor;
+    m_nextSrvDescriptor += count;
+    return start; 
 }

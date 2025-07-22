@@ -101,7 +101,7 @@ Material AssetLoader::LoadMaterial(const std::string& mtlFile, const std::string
     return mat;
 }
 
-void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename)
+UINT AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename)
 {
     HRESULT hr = S_OK;
     ComPtr<ID3D12Resource> texture;
@@ -167,15 +167,18 @@ void AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srvDesc.Texture2D.MipLevels = UINT(-1);
 
+    UINT srvIndex = framework->AllocateSrvDescriptor();
+
     CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHandle(
         framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart(),
-        framework->AllocateSrvDescriptor(),
+        srvIndex,
         framework->GetSrvDescriptorSize()
     );
 
     device->CreateShaderResourceView(texture.Get(), &srvDesc, cpuHandle);
 
     textures.push_back(texture);
+    return srvIndex;
 }
 
 std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPath) {

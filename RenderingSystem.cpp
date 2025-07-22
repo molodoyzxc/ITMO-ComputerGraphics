@@ -1,15 +1,20 @@
-#include "RenderingSystem.h"
+п»ї#include "RenderingSystem.h"
 #include "AssetLoader.h"
 #include "FrustumPlane.h"
 #include <filesystem>
 
 struct CB {
     XMFLOAT4X4 World, WVP;
-    XMFLOAT4 LightDir, LightColor, Ambient, EyePos, ObjectColor;
+    XMFLOAT4 EyePos, ObjectColor;
     XMFLOAT2 uvScale, uvOffset;
     XMFLOAT4 Ka, Kd, Ks;
     float Ns;
     float pad[3];
+};
+
+struct LightCB {
+    XMFLOAT4 LightDir, LightColor;
+    XMFLOAT4 Ambient;
 };
 
 static inline void ThrowIfFailed(HRESULT hr)
@@ -72,9 +77,9 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
     , m_input(input)
     , m_pipeline(framework)
-    , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // начальная позиция камеры
-    , m_lightX(0), m_lightY(-5), m_lightZ(2)   // начальное направление света
-    , m_yaw(0), m_pitch(0)                       // углы поворота камеры
+    , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // РЅР°С‡Р°Р»СЊРЅР°СЏ РїРѕР·РёС†РёСЏ РєР°РјРµСЂС‹
+    , m_lightX(0), m_lightY(-10), m_lightZ(0)   // РЅР°С‡Р°Р»СЊРЅРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ СЃРІРµС‚Р°
+    , m_yaw(0), m_pitch(0)                       // СѓРіР»С‹ РїРѕРІРѕСЂРѕС‚Р° РєР°РјРµСЂС‹
 {
 }
 
@@ -150,19 +155,17 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
+    UINT whiteIdx = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
 
-    int index = 1;
     for (auto& obj : m_objects) {
         const std::string& relTex = obj.material.diffuseTexPath;
         if (relTex.empty()) {
-            obj.textureID = 0;
+            obj.textureID = whiteIdx;
         }
         else {
             std::filesystem::path texName = std::filesystem::path(relTex).filename();
             std::filesystem::path fullPath = sceneFolder / texName;
-            obj.textureID = index++;
-            loader.LoadTexture(
+            obj.textureID = loader.LoadTexture(
                 device,
                 uploadBatch,
                 m_framework,
@@ -178,6 +181,15 @@ void RenderingSystem::LoadTextures()
 void RenderingSystem::Initialize()
 {
     m_pipeline.Init();
+
+    m_gbuffer = std::make_unique<GBuffer>(
+        m_framework,
+        static_cast<UINT>(m_framework->GetWidth()),
+        static_cast<UINT>(m_framework->GetHeight()),
+        m_framework->GetRtvHeap(), m_framework->GetRtvDescriptorSize(),
+        m_framework->GetSrvHeap(), m_framework->GetSrvDescriptorSize()
+    );
+    m_gbuffer->Initialize();
 
     auto* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
@@ -211,17 +223,23 @@ void RenderingSystem::Initialize()
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
             IID_PPV_ARGS(&m_constantBuffer)));
     }
+
+    {
+        const UINT cbSize = (sizeof(CB) + 255) & ~255;
+        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
+        const auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &cbDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&m_lightBuffer)));
+    }
 }
 
 void RenderingSystem::Update(float dt)
 {
-    if (m_input->IsKeyDown(Keys::K)) 
-    {
-        m_objects[0].textureID = 4;
-        m_objects[1].textureID = 3;
-        m_objects[2].textureID = 1;
-        m_objects[3].textureID = 2;
-    }
+    if (m_input->IsKeyDown(Keys::K)) m_lightZ += 0.05f;
+    if (m_input->IsKeyDown(Keys::L)) m_lightZ -= 0.05f;
 
     KeyboardControl();
 }
@@ -231,17 +249,26 @@ void RenderingSystem::Render()
     auto* cmd = m_framework->GetCommandList();
     auto* alloc = m_framework->GetCommandAllocator();
     ThrowIfFailed(cmd->Reset(alloc, nullptr));
-
     m_framework->BeginFrame();
 
-    float clear[4]{ 0.1f,0.2f,1.0f,1.0f };
-    m_framework->ClearColorAndDepthBuffer(clear);
+    m_gbuffer->Bind(cmd);
+    float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
+    m_gbuffer->Clear(cmd, clearG);
 
     m_framework->SetViewportAndScissors();
 
-    m_framework->SetRootSignatureAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetOpaquePSO());
+    cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
+    cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
 
-    CB cb;
+    {
+        ID3D12DescriptorHeap* heaps[] = {
+            m_framework->GetSrvHeap(),
+            m_framework->GetSamplerHeap()
+        };
+        cmd->SetDescriptorHeaps(_countof(heaps), heaps);
+    }
+
+    CB cb{};
     const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
     XMVECTOR forwardDir = XMVectorSet(
         cosf(m_pitch) * sinf(m_yaw),
@@ -249,53 +276,44 @@ void RenderingSystem::Render()
         cosf(m_pitch) * cosf(m_yaw),
         0.0f
     );
-
     XMVECTOR at = XMVectorAdd(eye, forwardDir);
     XMVECTOR up = XMVectorSet(0, 1, 0, 0);
     XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
-    float aspect = m_framework->GetWidth() / m_framework->GetHeight();
-    //float fov = 90.0f * XM_PI / 180.0f;
-    float fov = XM_PIDIV4;
-    const XMMATRIX proj = XMMatrixPerspectiveFovLH(fov, aspect, 0.1f, 5000.f);
+    float aspect = static_cast<float>(m_framework->GetWidth()) / m_framework->GetHeight();
+    XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 5000.f);
     XMMATRIX viewProj = view * proj;
+
     XMFLOAT4 frustumPlanes[6];
     ExtractFrustumPlanes(frustumPlanes, viewProj);
 
     const UINT cbSize = (sizeof(cb) + 255) & ~255;
     BYTE* pMappedData = nullptr;
-    CD3DX12_RANGE readRange(0, 0);
-    ThrowIfFailed(m_constantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMappedData)));
+    {
+        CD3DX12_RANGE readRange(0, 0);
+        ThrowIfFailed(
+            m_constantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMappedData))
+        );
+    }
 
     m_visibleObjects.clear();
-
-    // visible objects
     for (UINT i = 0; i < m_objects.size(); ++i)
     {
         const XMMATRIX world = m_objects[i].GetWorldMatrix();
-
         const XMVECTOR localCenter = XMLoadFloat3(&m_objects[i].bsCenter);
-        const float localRadius = m_objects[i].bsRadius;
-
+        const float   localRadius = m_objects[i].bsRadius;
         const XMVECTOR worldCenter = XMVector3Transform(localCenter, world);
-
         const auto& scale = m_objects[i].scale;
-        const float scaleLength = sqrtf(scale.x * scale.x + scale.y * scale.y + scale.z * scale.z);
-        const float worldRadius = localRadius * scaleLength;
+        const float   scaleLen = sqrtf(scale.x * scale.x + scale.y * scale.y + scale.z * scale.z);
+        const float   worldRadius = localRadius * scaleLen;
 
         bool visible = true;
         for (int p = 0; p < 6; ++p)
         {
             const XMVECTOR plane = XMLoadFloat4(&frustumPlanes[p]);
-            const float dist = XMVectorGetX(XMPlaneDotCoord(plane, worldCenter));
-            const float epsilon = 0.05f * worldRadius;
-            if (dist < -worldRadius + epsilon) {
-                visible = false;
-                break;
-            }
+            float dist = XMVectorGetX(XMPlaneDotCoord(plane, worldCenter));
+            if (dist < -worldRadius + 0.05f * worldRadius) { visible = false; break; }
         }
-
-        if (visible)
-            m_visibleObjects.push_back(&m_objects[i]);
+        if (visible) m_visibleObjects.push_back(&m_objects[i]);
     }
 
     for (UINT i = 0; i < m_visibleObjects.size(); ++i)
@@ -307,70 +325,117 @@ void RenderingSystem::Render()
         XMStoreFloat4x4(&cb.World, world);
         XMStoreFloat4x4(&cb.WVP, wvp);
         XMStoreFloat4(&cb.EyePos, eye);
-        cb.uvScale = XMFLOAT2(1.0f, 1.0f);
-        cb.uvOffset = XMFLOAT2(0.0f, 0.0f);
+
+        cb.uvScale = XMFLOAT2(1, 1);
+        cb.uvOffset = XMFLOAT2(0, 0);
         cb.ObjectColor = obj->Color;
-        cb.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
-        cb.LightColor = { 1,1,1,0 };
-        cb.Ambient = { 0.2f,0.2f,0.2f,0 };
-        cb.Ka = XMFLOAT4(obj->material.ambient.x, obj->material.ambient.y, obj->material.ambient.z, 1.0f);
-        cb.Ks = XMFLOAT4(obj->material.specular.x, obj->material.specular.y, obj->material.specular.z, 1.0f);
-        cb.Kd = XMFLOAT4(obj->material.diffuse.x, obj->material.diffuse.y, obj->material.diffuse.z, 1.0f);
+        cb.Ka = XMFLOAT4(obj->material.ambient.x,
+            obj->material.ambient.y,
+            obj->material.ambient.z, 1);
+        cb.Kd = XMFLOAT4(obj->material.diffuse.x,
+            obj->material.diffuse.y,
+            obj->material.diffuse.z, 1);
+        cb.Ks = XMFLOAT4(obj->material.specular.x,
+            obj->material.specular.y,
+            obj->material.specular.z, 1);
         cb.Ns = obj->material.shininess;
 
         memcpy(pMappedData + i * cbSize, &cb, sizeof(cb));
     }
-
     m_constantBuffer->Unmap(0, nullptr);
 
-
     cmd->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
     {
-        ID3D12DescriptorHeap* heaps[] = {
+        ID3D12DescriptorHeap* heaps2[] = {
             m_framework->GetSrvHeap(),
             m_framework->GetSamplerHeap()
         };
-        cmd->SetDescriptorHeaps(_countof(heaps), heaps);
+        cmd->SetDescriptorHeaps(_countof(heaps2), heaps2);
     }
 
-    bool flag = true;
+    bool switchedToTransparent = false;
     for (UINT i = 0; i < m_visibleObjects.size(); ++i)
     {
-
-        if (flag && m_visibleObjects[i]->Color.w != 1.0f) {
-            m_framework->GetCommandList()->SetPipelineState(m_pipeline.GetTransparentPSO());
-            flag = false;
+        SceneObject* obj = m_visibleObjects[i];
+        if (!switchedToTransparent && obj->Color.w != 1.0f) {
+            cmd->SetPipelineState(m_pipeline.GetTransparentPSO());
+            switchedToTransparent = true;
         }
+
         cmd->SetGraphicsRootConstantBufferView(
             0,
             m_constantBuffer->GetGPUVirtualAddress() + i * cbSize
         );
 
-        CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
+        cmd->SetGraphicsRootConstantBufferView(
+            1,
+            m_lightBuffer->GetGPUVirtualAddress()
+        );
+
+        CD3DX12_GPU_DESCRIPTOR_HANDLE texH(
             m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            m_visibleObjects[i]->textureID,
+            obj->textureID,
             m_framework->GetSrvDescriptorSize()
         );
-        cmd->SetGraphicsRootDescriptorTable(1, texHandle);
-
-        CD3DX12_GPU_DESCRIPTOR_HANDLE sampHandle(
+        cmd->SetGraphicsRootDescriptorTable(2, texH);
+        CD3DX12_GPU_DESCRIPTOR_HANDLE sampH(
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
         );
+        cmd->SetGraphicsRootDescriptorTable(3, sampH);
 
-        cmd->SetGraphicsRootDescriptorTable(2, sampHandle);
-
-        cmd->IASetVertexBuffers(0, 1, &m_visibleObjects[i]->vbView);
-        cmd->IASetIndexBuffer(&m_visibleObjects[i]->ibView);
-
+        cmd->IASetVertexBuffers(0, 1, &obj->vbView);
+        cmd->IASetIndexBuffer(&obj->ibView);
         cmd->DrawIndexedInstanced(
-            static_cast<UINT>(m_visibleObjects[i]->mesh.indices.size()),
-            1,
-            0,
-            0,
-            0
+            (UINT)obj->mesh.indices.size(),
+            1, 0, 0, 0
         );
     }
+
+    m_gbuffer->TransitionToReadable(cmd);
+
+
+    LightCB lightCB;
+
+    lightCB.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
+    lightCB.LightColor = { 1,1,1,0 };
+    lightCB.Ambient = { 0.2f,0.2f,0.2f,0 };
+
+    {
+        BYTE* pLData = nullptr;
+        CD3DX12_RANGE lr(0, 0);
+        ThrowIfFailed(
+            m_lightBuffer->Map(0, &lr, reinterpret_cast<void**>(&pLData))
+        );
+        memcpy(pLData, &lightCB, sizeof(lightCB));
+        m_lightBuffer->Unmap(0, nullptr);
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    float clearBB[4] = { 0,0,0,1 };
+    cmd->ClearRenderTargetView(rtv, clearBB, 0, nullptr);
+    m_framework->SetViewportAndScissors();
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
+    cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
+
+    {
+        ID3D12DescriptorHeap* defHeaps[] = {
+            m_framework->GetSrvHeap(),
+            m_framework->GetSamplerHeap()
+        };
+        cmd->SetDescriptorHeaps(_countof(defHeaps), defHeaps);
+    }
+
+    auto srvHandles = m_gbuffer->GetSRVs();
+    cmd->SetGraphicsRootDescriptorTable(0, srvHandles[0]);
+    cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootDescriptorTable(2,
+        m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
+    );
+
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
 
     m_framework->EndFrame();
 }
