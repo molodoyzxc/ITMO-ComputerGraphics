@@ -13,8 +13,16 @@ struct CB {
 };
 
 struct LightCB {
-    XMFLOAT4 LightDir, LightColor;
-    XMFLOAT4 Ambient;
+    int       Type;
+    int       pad0[3];
+    DirectX::XMFLOAT4 LightDir;
+    DirectX::XMFLOAT4 LightColor;
+    DirectX::XMFLOAT4 AmbientColor;
+    DirectX::XMFLOAT4 LightPosRange;
+    DirectX::XMFLOAT4 SpotDirInnerCos; 
+    DirectX::XMFLOAT4 SpotOuterPad;
+    DirectX::XMFLOAT4X4 InvViewProj;
+    DirectX::XMFLOAT4 ScreenSize;
 };
 
 static inline void ThrowIfFailed(HRESULT hr)
@@ -46,7 +54,7 @@ void RenderingSystem::KeyboardControl() {
         acceleration = 1.0f;
     }
 
-    const float moveSpeed = 0.1f * acceleration;
+    const float moveSpeed = 3.0f * acceleration;
 
     if (m_input->IsKeyDown(Keys::W)) {
         XMVECTOR move = XMVectorScale(forward, moveSpeed);
@@ -77,7 +85,7 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
     , m_input(input)
     , m_pipeline(framework)
-    , m_cameraX(0), m_cameraY(0), m_cameraZ(-10) // начальная позиция камеры
+    , m_cameraX(0), m_cameraY(500), m_cameraZ(0) // начальная позиция камеры
     , m_lightX(0), m_lightY(-10), m_lightZ(0)   // начальное направление света
     , m_yaw(0), m_pitch(0)                       // углы поворота камеры
 {
@@ -90,7 +98,7 @@ void RenderingSystem::SetObjects() {
     SceneObject Model = {
         CreateCube(),
         {1.0f,1.0f,1.0f,1.0f},
-        {0,0,0,},
+        {-1,-1,0,},
         {0,0,0,},
         {2.0f,2.0f,2.0f,},
     };
@@ -99,25 +107,25 @@ void RenderingSystem::SetObjects() {
     SceneObject Cube = {
         CreateCube(),
         {1.0f,1.0f,1.0f,1.0f},
-        {0,3,0,},
+        {-1,1,0,},
         {0,0,0,},
         {2.0f,2.0f,2.0f,},
     };
 
     SceneObject Right = {
         CreateCube(),
-        {1.0f,1.0f,1.0f,0.8f,},
-        {5,0,0,},
+        {1.0f,1.0f,1.0f,1.0f,},
+        {1,1,0,},
         {0,0,0,},
-        {1.0f,10.0f,10.0f,},
+        {2.0f,2.0f,2.0f,},
     };
 
     SceneObject Left = {
         CreateCube(),
-        {1.0f,1.0f,1.0f,0.8f,},
-        {-5,0,0,},
+        {1.0f,1.0f,1.0f,1.0f,},
+        {1,-1,0,},
         {0,0,0,},
-        {1.0f,10.0f,10.0f,},
+        {2.0f,2.0f,2.0f,},
     };
 
     //Model.LoadMaterial("Assets\\12248_Bird_v1_L2.mtl","12248_Bird_v1");
@@ -127,9 +135,9 @@ void RenderingSystem::SetObjects() {
     //m_objects.push_back(Right);
     //m_objects.push_back(Left);
     m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
-    for (SceneObject& obj : m_objects) {
-        obj.scale = { 0.1f,0.1f,0.1f, };
-    }
+    //for (SceneObject& obj : m_objects) {
+    //    obj.scale = { 0.1f,0.1f,0.1f, };
+    //}
 
     // culling test
     //for (int i = 0; i < 5; i++) {
@@ -141,6 +149,13 @@ void RenderingSystem::SetObjects() {
     //    };
     //    m_objects.push_back(tmp);
     //}
+}
+
+void RenderingSystem::SetLights() 
+{
+    Light point {};
+
+    lights.push_back(point);
 }
 
 void RenderingSystem::LoadTextures() 
@@ -197,6 +212,7 @@ void RenderingSystem::Initialize()
     CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
     SetObjects();
+    SetLights();
 
     alloc->Reset();
     cmdList->Reset(alloc, nullptr);
@@ -238,8 +254,17 @@ void RenderingSystem::Initialize()
 
 void RenderingSystem::Update(float dt)
 {
-    if (m_input->IsKeyDown(Keys::K)) m_lightZ += 0.05f;
-    if (m_input->IsKeyDown(Keys::L)) m_lightZ -= 0.05f;
+    if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
+    if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
+    if (m_input->IsKeyDown(Keys::F3)) lights[0].type = 2;
+
+    if (m_input->IsKeyDown(Keys::N)) lights[0].radius -= 1.0f;
+    if (m_input->IsKeyDown(Keys::M)) lights[0].radius += 1.0f;
+
+    if (m_input->IsKeyDown(Keys::J)) lights[0].position.x -= 1.0f;
+    if (m_input->IsKeyDown(Keys::L)) lights[0].position.x += 1.0f;
+    if (m_input->IsKeyDown(Keys::I)) lights[0].position.y += 1.0f;
+    if (m_input->IsKeyDown(Keys::K)) lights[0].position.y -= 1.0f;
 
     KeyboardControl();
 }
@@ -394,11 +419,25 @@ void RenderingSystem::Render()
     m_gbuffer->TransitionToReadable(cmd);
 
 
-    LightCB lightCB;
+    LightCB lightCB{};
 
-    lightCB.LightDir = { m_lightX, m_lightY, m_lightZ, 0 };
-    lightCB.LightColor = { 1,1,1,0 };
-    lightCB.Ambient = { 0.2f,0.2f,0.2f,0 };
+    XMMATRIX projForDeferred = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 5000.f);
+    XMMATRIX viewProjForDeferred = view * projForDeferred;
+    XMMATRIX invVP = XMMatrixInverse(nullptr, viewProjForDeferred);
+    invVP = XMMatrixTranspose(invVP);
+    XMStoreFloat4x4(&lightCB.InvViewProj, invVP);
+
+    for (Light& light : lights) 
+    {       
+        lightCB.Type = light.type;
+        lightCB.LightDir = { light.direction.x, light.direction.y, light.direction.z, 0.0f };
+        lightCB.LightColor = { light.color.x, light.color.y, light.color.z, 0.0f };
+        lightCB.AmbientColor = { 0.1f, 0.1f, 0.1f, 0.0f };
+        lightCB.LightPosRange = { light.position.x, light.position.y, light.position.z, light.radius };
+        lightCB.SpotDirInnerCos = { light.spotDirection.x, light.spotDirection.y, light.spotDirection.z, light.innerCone() };
+        lightCB.SpotOuterPad = { light.outerCone(), 0.0f, 0.0f, 0.0f };
+        lightCB.ScreenSize = { m_framework->GetWidth(), m_framework->GetHeight(), 0.0f, 0.0f };
+    }
 
     {
         BYTE* pLData = nullptr;

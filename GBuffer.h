@@ -29,19 +29,20 @@ private:
     void CreateDescriptors();
 
     DX12Framework* m_framework;
-    UINT                        m_width, m_height;
+    UINT m_width, m_height;
 
-    ComPtr<ID3D12Resource>      m_rtAlbedo;    
-    ComPtr<ID3D12Resource>      m_rtNormal;    
-    ComPtr<ID3D12Resource>      m_rtMaterial;  
-    ComPtr<ID3D12Resource>      m_depth;       
+    ComPtr<ID3D12Resource> m_rtAlbedo;    
+    ComPtr<ID3D12Resource> m_rtNormal;    
+    ComPtr<ID3D12Resource> m_rtMaterial;  
+    ComPtr<ID3D12Resource> m_depth;       
 
     ID3D12DescriptorHeap* m_rtvHeap;
-    UINT                        m_rtvDescriptorSize;
-    UINT                        m_rtvStartIndex; 
+    UINT m_rtvDescriptorSize;
+    UINT m_rtvStartIndex; 
     ID3D12DescriptorHeap* m_srvHeap;
-    UINT                        m_srvDescriptorSize;
-    UINT                        m_srvStartIndex; 
-    UINT                        m_srvNormalIndex;
-    UINT                        m_srvMaterialIndex;
+    UINT m_srvDescriptorSize;
+    UINT m_srvStartIndex; 
+    UINT m_srvNormalIndex;
+    UINT m_srvMaterialIndex;
+    UINT depthSrvIndex;
 };

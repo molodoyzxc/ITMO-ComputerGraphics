@@ -63,9 +63,9 @@ private:
     void CreateRenderTargetViews();
     void CreateDepthResources();
 
-    HWND                m_hwnd;
-    float                m_width;
-    float                m_height;
+    HWND m_hwnd;
+    float m_width;
+    float m_height;
 
     static const UINT   FrameCount = 2;
     UINT m_nextSrvDescriptor = 0;
@@ -89,6 +89,6 @@ private:
     UINT64 m_fenceValue;
     HANDLE m_fenceEvent;
     UINT m_whiteSrvIndex = UINT_MAX;
-    ComPtr<ID3D12Resource>    m_whiteTexture;
-    ComPtr<ID3D12Resource>    m_whiteUploadBuffer;
+    ComPtr<ID3D12Resource> m_whiteTexture;
+    ComPtr<ID3D12Resource> m_whiteUploadBuffer;
 };

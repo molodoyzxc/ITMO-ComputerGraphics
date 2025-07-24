@@ -9,6 +9,7 @@
 #include "IGameApp.h"
 #include "AssetLoader.h"
 #include "GBuffer.h"
+#include "Light.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -26,12 +27,13 @@ public:
 private:
     DX12Framework* m_framework;
     InputDevice* m_input;
-    Pipeline       m_pipeline;
+    Pipeline m_pipeline;
     AssetLoader loader;
     std::unique_ptr<GBuffer> m_gbuffer;
 
     std::vector<SceneObject> m_objects;
     std::vector<SceneObject*> m_visibleObjects;
+    std::vector<Light> lights;
 
     ComPtr<ID3D12Resource> m_constantBuffer;
     ComPtr<ID3D12Resource> m_lightBuffer;
@@ -42,5 +44,6 @@ private:
 
     void KeyboardControl();
     void SetObjects();
+    void SetLights();
     void LoadTextures();
 };

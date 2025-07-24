@@ -181,7 +181,7 @@ void Pipeline::Init()
         &geoDesc, IID_PPV_ARGS(&m_gBufferPSO)
     ));
 
-    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 0);
+    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
     CD3DX12_ROOT_PARAMETER deferredParams[3];
     deferredParams[0].InitAsDescriptorTable(1, &srvRange);
     deferredParams[1].InitAsConstantBufferView(1);

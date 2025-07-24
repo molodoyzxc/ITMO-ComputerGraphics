@@ -19,9 +19,10 @@ GBuffer::GBuffer(DX12Framework* framework,
 {
 
     m_rtvStartIndex = 2;
-    m_srvStartIndex = m_framework->AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3);
+    m_srvStartIndex = m_framework->AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4);
     m_srvNormalIndex = m_srvStartIndex + 1;
     m_srvMaterialIndex = m_srvStartIndex + 2;
+    depthSrvIndex = m_srvStartIndex + 3;
 }
 
 void GBuffer::Initialize() {
@@ -61,7 +62,8 @@ void GBuffer::CreateResources() {
         &clearRT, IID_PPV_ARGS(&m_rtMaterial)));
 
     CD3DX12_RESOURCE_DESC depthDesc = CD3DX12_RESOURCE_DESC::Tex2D(
-        DXGI_FORMAT_D32_FLOAT, m_width, m_height,
+        DXGI_FORMAT_R32_TYPELESS,
+        m_width, m_height,
         1, 1, 1, 0,
         D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
     );
@@ -86,13 +88,25 @@ void GBuffer::CreateDescriptors() {
     cpuRTV.Offset(1, m_rtvDescriptorSize);
     m_framework->GetDevice()->CreateRenderTargetView(m_rtMaterial.Get(), nullptr, cpuRTV);
 
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsvDesc.Texture2D.MipSlice = 0;
+
     CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(m_framework->GetDSVHandle());
-    m_framework->GetDevice()->CreateDepthStencilView(m_depth.Get(), nullptr, dsvHandle);
+    m_framework->GetDevice()->CreateDepthStencilView(m_depth.Get(), &dsvDesc, dsvHandle);
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
     srvDesc.Texture2D.MipLevels = 1;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC dsDesc = {};
+    dsDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    dsDesc.Format = DXGI_FORMAT_R32_FLOAT;
+    dsDesc.Texture2D.MipLevels = 1;
+    dsDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 
     auto cpuSRV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
         m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -111,6 +125,11 @@ void GBuffer::CreateDescriptors() {
         m_srvMaterialIndex, m_srvDescriptorSize);
     srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     m_framework->GetDevice()->CreateShaderResourceView(m_rtMaterial.Get(), &srvDesc, cpuSRV);
+
+    auto cpuDS = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+        m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
+        depthSrvIndex, m_srvDescriptorSize);
+    m_framework->GetDevice()->CreateShaderResourceView(m_depth.Get(), &dsDesc, cpuDS);
 }
 
 void GBuffer::Bind(ID3D12GraphicsCommandList* cmd) {
@@ -155,11 +174,11 @@ void GBuffer::Clear(ID3D12GraphicsCommandList* cmd, const FLOAT clearColor[4]) {
 }
 
 std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> GBuffer::GetSRVs() const {
-    std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> handles(3);
+    std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> handles(4);
     auto gpuStart = CD3DX12_GPU_DESCRIPTOR_HANDLE(
         m_srvHeap->GetGPUDescriptorHandleForHeapStart(),
         m_srvStartIndex, m_srvDescriptorSize);
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         handles[i] = CD3DX12_GPU_DESCRIPTOR_HANDLE(gpuStart, i, m_srvDescriptorSize);
     return handles;
 }
