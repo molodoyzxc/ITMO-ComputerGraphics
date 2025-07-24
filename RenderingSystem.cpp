@@ -81,6 +81,31 @@ void RenderingSystem::KeyboardControl() {
     if (m_input->IsKeyDown(Keys::E)) m_cameraY += moveSpeed;
 }
 
+void RenderingSystem::CountFPS()
+{
+    static float fpsAccumulator = 0.0f;
+    static int frameCount = 0;
+
+    fpsAccumulator += timer.GetElapsedSeconds();
+    frameCount++;
+
+    if (fpsAccumulator >= 1.0f)
+    {
+        float fps = frameCount / fpsAccumulator;
+
+        wchar_t msg[128];
+        swprintf_s(msg, L"[FPS] %.2f\n", fps);
+        OutputDebugStringW(msg);
+
+        wchar_t buffer[128];
+        swprintf_s(buffer, L"[CAMERA] X: %.2f Y: %.2f Z: %.2f\n", m_cameraX, m_cameraY, m_cameraZ);
+        OutputDebugStringW(buffer);
+
+        frameCount = 0;
+        fpsAccumulator = 0.0f;
+    }
+}
+
 RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
     , m_input(input)
@@ -155,7 +180,25 @@ void RenderingSystem::SetLights()
 {
     Light point {};
 
+    Light red{};
+    red.color = { 1.0f,0.0f,0.0f };
+    red.position = { 800, 500 ,0 };
+    red.radius = 2000;
+
+    Light green{};
+    green.color = { 0.0f,1.0f,0.0f };
+    green.position = { -800, 500, 0 };
+    green.radius = 1000;
+
+    Light blue{};
+    blue.color = { 0.0f,0.0f,1.0f };
+    blue.position = { 0.0f,300,0 };
+    blue.radius = 500;
+
     lights.push_back(point);
+    lights.push_back(red);
+    lights.push_back(green);
+    lights.push_back(blue);
 }
 
 void RenderingSystem::LoadTextures() 
@@ -227,7 +270,7 @@ void RenderingSystem::Initialize()
     m_framework->WaitForGpu();
 
     LoadTextures();
-    
+
     // CB
     {
         const UINT cbSize = (sizeof(CB) + 255) & ~255;
@@ -241,14 +284,20 @@ void RenderingSystem::Initialize()
     }
 
     {
-        const UINT cbSize = (sizeof(CB) + 255) & ~255;
-        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
-        const auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        const UINT lightCBSize = (sizeof(LightCB) + 255) & ~255;
+        const UINT maxLights = 64;
+        const UINT totalSize = lightCBSize * maxLights;
+
+        CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
 
         ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload, D3D12_HEAP_FLAG_NONE, &cbDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-            IID_PPV_ARGS(&m_lightBuffer)));
+            &heapUpload,
+            D3D12_HEAP_FLAG_NONE,
+            &lightDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&m_lightBuffer)
+        ));
     }
 }
 
@@ -268,11 +317,13 @@ void RenderingSystem::Update(float dt)
     if (m_input->IsKeyDown(Keys::I)) lights[0].position.z += 2.0f;
     if (m_input->IsKeyDown(Keys::K)) lights[0].position.z -= 2.0f;
 
+    CountFPS();
     KeyboardControl();
 }
 
 void RenderingSystem::Render()
 {
+    timer.Tick();
     auto* cmd = m_framework->GetCommandList();
     auto* alloc = m_framework->GetCommandAllocator();
     ThrowIfFailed(cmd->Reset(alloc, nullptr));
@@ -420,36 +471,6 @@ void RenderingSystem::Render()
 
     m_gbuffer->TransitionToReadable(cmd);
 
-
-    LightCB lightCB{};
-
-    XMMATRIX projForDeferred = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 5000.f);
-    XMMATRIX viewProjForDeferred = view * projForDeferred;
-    XMMATRIX invVP = XMMatrixInverse(nullptr, viewProjForDeferred);
-    invVP = XMMatrixTranspose(invVP);
-    XMStoreFloat4x4(&lightCB.InvViewProj, invVP);
-
-    for (Light& light : lights) 
-    {       
-        lightCB.Type = light.type;
-        lightCB.LightDir = { light.direction.x, light.direction.y, light.direction.z, 0.0f };
-        lightCB.LightColor = { light.color.x, light.color.y, light.color.z, 0.0f };
-        lightCB.AmbientColor = { 0.1f, 0.1f, 0.1f, 0.0f };
-        lightCB.LightPosRange = { light.position.x, light.position.y, light.position.z, light.radius };
-        lightCB.SpotDirInnerCos = { light.spotDirection.x, light.spotDirection.y, light.spotDirection.z, light.innerCone() };
-        lightCB.SpotOuterPad = { light.outerCone(), 0.0f, 0.0f, 0.0f };
-        lightCB.ScreenSize = { m_framework->GetWidth(), m_framework->GetHeight(), 0.0f, 0.0f };
-        {
-            BYTE* pLData = nullptr;
-            CD3DX12_RANGE lr(0, 0);
-            ThrowIfFailed(
-                m_lightBuffer->Map(0, &lr, reinterpret_cast<void**>(&pLData))
-            );
-            memcpy(pLData, &lightCB, sizeof(lightCB));
-            m_lightBuffer->Unmap(0, nullptr);
-        }
-    }
-
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     float clearBB[4] = { 0,0,0,1 };
@@ -469,13 +490,46 @@ void RenderingSystem::Render()
 
     auto srvHandles = m_gbuffer->GetSRVs();
     cmd->SetGraphicsRootDescriptorTable(0, srvHandles[0]);
-    cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
-    cmd->SetGraphicsRootDescriptorTable(2,
-        m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
-    );
+    cmd->SetGraphicsRootDescriptorTable(2, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
 
-    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->DrawInstanced(3, 1, 0, 0);
+    const UINT lightCBSize = (sizeof(LightCB) + 255) & ~255;
+    BYTE* pLightData = nullptr;
+    {
+        CD3DX12_RANGE readRange(0, 0);
+        ThrowIfFailed(m_lightBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pLightData)));
+    }
+
+    XMMATRIX projForDeferred = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 5000.f);
+    XMMATRIX viewProjForDeferred = view * proj;
+
+    for (UINT i = 0; i < lights.size(); ++i)
+    {
+        Light& light = lights[i];
+
+        LightCB lightCB{};
+
+        XMMATRIX invVP = XMMatrixInverse(nullptr, viewProjForDeferred);
+        XMStoreFloat4x4(&lightCB.InvViewProj, XMMatrixTranspose(invVP));
+        lightCB.Type = light.type;
+        lightCB.LightDir = { light.direction.x, light.direction.y, light.direction.z, 0 };
+        lightCB.LightColor = { light.color.x,     light.color.y,     light.color.z,     0 };
+        lightCB.AmbientColor = { 0.05f, 0.05f, 0.05f, 0 };
+        lightCB.LightPosRange = { light.position.x, light.position.y, light.position.z, light.radius };
+        lightCB.SpotDirInnerCos = { light.spotDirection.x, light.spotDirection.y, light.spotDirection.z, light.innerCone() };
+        lightCB.SpotOuterPad = { light.outerCone(), 0, 0, 0 };
+        lightCB.ScreenSize = { m_framework->GetWidth(), m_framework->GetHeight(), 0, 0 };
+
+        memcpy(pLightData + i * lightCBSize, &lightCB, sizeof(LightCB));
+    }
+    m_lightBuffer->Unmap(0, nullptr);
+
+    for (UINT i = 0; i < lights.size(); ++i)
+    {
+        D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + i * lightCBSize;
+        cmd->SetGraphicsRootConstantBufferView(1, cbAddr);
+        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        cmd->DrawInstanced(3, 1, 0, 0);
+    }
 
     m_framework->EndFrame();
 }

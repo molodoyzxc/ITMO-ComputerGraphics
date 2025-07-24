@@ -39,7 +39,7 @@ void GBuffer::CreateResources() {
     CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_CLEAR_VALUE clearRT = {};
     clearRT.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    clearRT.Color[0] = 0.1f; clearRT.Color[1] = 0.1f;
+    clearRT.Color[0] = 0.2f; clearRT.Color[1] = 0.2f;
     clearRT.Color[2] = 1.0f; clearRT.Color[3] = 1.0f;
 
     ThrowIfFailed(m_framework->GetDevice()->CreateCommittedResource(

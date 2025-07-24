@@ -35,12 +35,15 @@ struct VSInput
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
 };
+
 struct VSOutput
 {
     float4 posH : SV_POSITION;
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
+    float4 worldPos : TEXCOORD1;
 };
+
 struct GBufferOut
 {
     float4 Albedo : SV_Target0;
@@ -52,8 +55,9 @@ struct GBufferOut
 VSOutput VS_GBuffer(VSInput IN)
 {
     VSOutput OUT;
-    float4 worldPos = mul(World, float4(IN.pos, 1.0));
-    OUT.posH = mul(ViewProj, worldPos);
+    float4 wp = mul(World, float4(IN.pos, 1));
+    OUT.worldPos = wp;
+    OUT.posH = mul(ViewProj, wp);
     OUT.posH.y *= -1;
     OUT.normal = normalize(mul((float3x3) World, IN.normal));
     OUT.uv = IN.uv;
@@ -65,9 +69,11 @@ GBufferOut PS_GBuffer(VSOutput IN)
     GBufferOut OUT;
     OUT.Albedo = diffuseMap.Sample(samLinear, IN.uv);
     clip(OUT.Albedo.a - 0.1);
-    
+
     OUT.Normal = float4(normalize(IN.normal) * 0.5 + 0.5, 0);
     OUT.Params = float4(1, 0, 0, 0);
+    OUT.WorldPos = IN.worldPos;
+
     return OUT;
 }
 
@@ -77,6 +83,7 @@ struct VSFwdOut
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
 };
+
 VSFwdOut VSMain(VSInput IN)
 {
     VSFwdOut OUT;
@@ -87,6 +94,7 @@ VSFwdOut VSMain(VSInput IN)
     OUT.uv = IN.uv;
     return OUT;
 }
+
 float4 PSMain(VSFwdOut IN) : SV_TARGET
 {
     float3 N = normalize(IN.normal);
@@ -100,6 +108,7 @@ struct VSQOut
     float4 pos : SV_POSITION;
     float2 uv : TEXCOORD0;
 };
+
 VSQOut VS_Quad(uint id : SV_VertexID)
 {
     VSQOut OUT;

@@ -10,6 +10,7 @@
 #include "AssetLoader.h"
 #include "GBuffer.h"
 #include "Light.h"
+#include "Timer.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -30,6 +31,7 @@ private:
     Pipeline m_pipeline;
     AssetLoader loader;
     std::unique_ptr<GBuffer> m_gbuffer;
+    Timer timer;
 
     std::vector<SceneObject> m_objects;
     std::vector<SceneObject*> m_visibleObjects;
@@ -46,4 +48,5 @@ private:
     void SetObjects();
     void SetLights();
     void LoadTextures();
+    void CountFPS();
 };

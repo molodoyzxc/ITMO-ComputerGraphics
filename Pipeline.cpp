@@ -211,7 +211,21 @@ void Pipeline::Init()
     defDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     opaqueDesc.RasterizerState.FrontCounterClockwise = TRUE;
     opaqueDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
-    defDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+
+    D3D12_BLEND_DESC blendDesc = {};
+    blendDesc.AlphaToCoverageEnable = FALSE;
+    blendDesc.IndependentBlendEnable = FALSE;
+    auto& rt = blendDesc.RenderTarget[0];
+    rt.BlendEnable = TRUE;
+    rt.SrcBlend = D3D12_BLEND_ONE;
+    rt.DestBlend = D3D12_BLEND_ONE;
+    rt.BlendOp = D3D12_BLEND_OP_ADD;
+    rt.SrcBlendAlpha = D3D12_BLEND_ONE;
+    rt.DestBlendAlpha = D3D12_BLEND_ONE;
+    rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    rt.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    defDesc.BlendState = blendDesc;
+
     defDesc.DepthStencilState.DepthEnable = FALSE;
     defDesc.SampleMask = UINT_MAX;
     defDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
