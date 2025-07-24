@@ -258,13 +258,15 @@ void RenderingSystem::Update(float dt)
     if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
     if (m_input->IsKeyDown(Keys::F3)) lights[0].type = 2;
 
-    if (m_input->IsKeyDown(Keys::N)) lights[0].radius -= 1.0f;
-    if (m_input->IsKeyDown(Keys::M)) lights[0].radius += 1.0f;
+    if (m_input->IsKeyDown(Keys::N)) lights[0].radius -= 2.0f;
+    if (m_input->IsKeyDown(Keys::M)) lights[0].radius += 2.0f;
 
-    if (m_input->IsKeyDown(Keys::J)) lights[0].position.x -= 1.0f;
-    if (m_input->IsKeyDown(Keys::L)) lights[0].position.x += 1.0f;
-    if (m_input->IsKeyDown(Keys::I)) lights[0].position.y += 1.0f;
-    if (m_input->IsKeyDown(Keys::K)) lights[0].position.y -= 1.0f;
+    if (m_input->IsKeyDown(Keys::J)) lights[0].position.x -= 2.0f;
+    if (m_input->IsKeyDown(Keys::L)) lights[0].position.x += 2.0f;
+    if (m_input->IsKeyDown(Keys::O)) lights[0].position.y += 2.0f;
+    if (m_input->IsKeyDown(Keys::U)) lights[0].position.y -= 2.0f;
+    if (m_input->IsKeyDown(Keys::I)) lights[0].position.z += 2.0f;
+    if (m_input->IsKeyDown(Keys::K)) lights[0].position.z -= 2.0f;
 
     KeyboardControl();
 }
@@ -437,16 +439,15 @@ void RenderingSystem::Render()
         lightCB.SpotDirInnerCos = { light.spotDirection.x, light.spotDirection.y, light.spotDirection.z, light.innerCone() };
         lightCB.SpotOuterPad = { light.outerCone(), 0.0f, 0.0f, 0.0f };
         lightCB.ScreenSize = { m_framework->GetWidth(), m_framework->GetHeight(), 0.0f, 0.0f };
-    }
-
-    {
-        BYTE* pLData = nullptr;
-        CD3DX12_RANGE lr(0, 0);
-        ThrowIfFailed(
-            m_lightBuffer->Map(0, &lr, reinterpret_cast<void**>(&pLData))
-        );
-        memcpy(pLData, &lightCB, sizeof(lightCB));
-        m_lightBuffer->Unmap(0, nullptr);
+        {
+            BYTE* pLData = nullptr;
+            CD3DX12_RANGE lr(0, 0);
+            ThrowIfFailed(
+                m_lightBuffer->Map(0, &lr, reinterpret_cast<void**>(&pLData))
+            );
+            memcpy(pLData, &lightCB, sizeof(lightCB));
+            m_lightBuffer->Unmap(0, nullptr);
+        }
     }
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();

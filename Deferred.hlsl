@@ -18,7 +18,7 @@ cbuffer LightingCB : register(b1)
     float4 SpotDirInnerCos;
     float4 SpotOuterPad;
 
-    float4x4 InvViewProj;
+    column_major float4x4 InvViewProj;
     float4 ScreenSize;
 };
 
@@ -121,7 +121,7 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
     float depth = gDepthTex.Load(int3(pix, 0));
     float2 ndc;
     ndc.x = uv.x * 2.0 - 1.0;
-    ndc.y = (1.0 - uv.y) * 2.0 - 1.0;
+    ndc.y = -((1.0 - uv.y) * 2.0 - 1.0);
     float4 clipPos = float4(ndc.x, ndc.y, depth, 1.0);
     float4 worldH = mul(clipPos, InvViewProj);
     float3 worldPos = worldH.xyz / worldH.w;

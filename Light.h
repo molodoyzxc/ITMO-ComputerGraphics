@@ -7,7 +7,7 @@ struct Light
     int type = 1; // Directional = 0, Point = 1, Spot = 2
     XMFLOAT3 position{ 0, 5, 0, };
     XMFLOAT3 direction{ 0, -1, 0, };
-    XMFLOAT3 spotDirection{ 0.0f, -1.0f, 0.0f, };
+    XMFLOAT3 spotDirection{ 1.0f, 0.0f, 0.0f, };
     XMFLOAT3 color{ 1.0f, 1.0f, 1.0f, };
     float radius = 50.0f;
     float inner = 15.0f;
