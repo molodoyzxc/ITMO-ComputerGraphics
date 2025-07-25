@@ -4,12 +4,7 @@
 #include <filesystem>
 
 struct CB {
-    XMFLOAT4X4 World, WVP;
-    XMFLOAT4 EyePos, ObjectColor;
-    XMFLOAT2 uvScale, uvOffset;
-    XMFLOAT4 Ka, Kd, Ks;
-    float Ns;
-    float pad[3];
+    XMFLOAT4X4 World, ViewProj;
 };
 
 struct LightCB {
@@ -153,6 +148,13 @@ void RenderingSystem::SetObjects() {
         {2.0f,2.0f,2.0f,},
     };
 
+    SceneObject Sphere = {
+        CreateSphere(),
+        {0,0,0,},
+        {0,0,0,},
+        {10.0f,10.0f,10.0f,},
+    };
+
     //Model.LoadMaterial("Assets\\12248_Bird_v1_L2.mtl","12248_Bird_v1");
 
     //m_objects.push_back(Model);
@@ -160,6 +162,7 @@ void RenderingSystem::SetObjects() {
     //m_objects.push_back(Right);
     //m_objects.push_back(Left);
     m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
+    m_objects.push_back(Sphere);
     //for (SceneObject& obj : m_objects) {
     //    obj.scale = { 0.1f,0.1f,0.1f, };
     //}
@@ -303,6 +306,8 @@ void RenderingSystem::Initialize()
 
 void RenderingSystem::Update(float dt)
 {
+    m_objects.back().position = lights[0].position;
+
     if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
     if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
     if (m_input->IsKeyDown(Keys::F3)) lights[0].type = 2;
@@ -401,22 +406,7 @@ void RenderingSystem::Render()
         XMMATRIX wvp = world * viewProj;
 
         XMStoreFloat4x4(&cb.World, world);
-        XMStoreFloat4x4(&cb.WVP, wvp);
-        XMStoreFloat4(&cb.EyePos, eye);
-
-        cb.uvScale = XMFLOAT2(1, 1);
-        cb.uvOffset = XMFLOAT2(0, 0);
-        cb.ObjectColor = obj->Color;
-        cb.Ka = XMFLOAT4(obj->material.ambient.x,
-            obj->material.ambient.y,
-            obj->material.ambient.z, 1);
-        cb.Kd = XMFLOAT4(obj->material.diffuse.x,
-            obj->material.diffuse.y,
-            obj->material.diffuse.z, 1);
-        cb.Ks = XMFLOAT4(obj->material.specular.x,
-            obj->material.specular.y,
-            obj->material.specular.z, 1);
-        cb.Ns = obj->material.shininess;
+        XMStoreFloat4x4(&cb.ViewProj, viewProj);
 
         memcpy(pMappedData + i * cbSize, &cb, sizeof(cb));
     }
@@ -528,7 +518,7 @@ void RenderingSystem::Render()
         D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + i * lightCBSize;
         cmd->SetGraphicsRootConstantBufferView(1, cbAddr);
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        cmd->DrawInstanced(3, 1, 0, 0);
+        cmd->DrawInstanced(6, 1, 0, 0);
     }
 
     m_framework->EndFrame();

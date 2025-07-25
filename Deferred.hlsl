@@ -112,11 +112,15 @@ struct VSQOut
 VSQOut VS_Quad(uint id : SV_VertexID)
 {
     VSQOut OUT;
-    float2 verts[3] =
+    float2 verts[6] =
     {
         float2(-1, -1),
-        float2(-1, 3),
-        float2(3, -1)
+        float2(-1, 1),
+        float2(1, 1),
+        
+        float2(-1, -1),
+        float2(1, 1),
+        float2(1, -1),
     };
     OUT.pos = float4(verts[id], 0, 1);
     OUT.uv = verts[id] * 0.5 + 0.5;
