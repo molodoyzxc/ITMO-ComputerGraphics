@@ -39,6 +39,7 @@ private:
 
     ComPtr<ID3D12Resource> m_constantBuffer;
     ComPtr<ID3D12Resource> m_lightBuffer;
+    ComPtr<ID3D12Resource> m_ambientBuffer;
 
     float m_cameraX, m_cameraY, m_cameraZ;
     float m_lightX, m_lightY, m_lightZ;

@@ -11,7 +11,6 @@ cbuffer LightingCB : register(b1)
 
     float4 LightDir;
     float4 LightColor;
-    float4 AmbientColor;
 
     float4 LightPosRange;
 
@@ -20,6 +19,11 @@ cbuffer LightingCB : register(b1)
 
     column_major float4x4 InvViewProj;
     float4 ScreenSize;
+};
+
+cbuffer AmbientCB : register(b2)
+{
+    float4 AmbientColor;
 };
 
 SamplerState samLinear : register(s0);
@@ -127,6 +131,14 @@ VSQOut VS_Quad(uint id : SV_VertexID)
     return OUT;
 }
 
+float4 PS_Ambient(VSQOut IN) : SV_TARGET
+{
+    float4 albedo = gAlbedoTex.Sample(samLinear, IN.uv);
+    if (albedo.a < 0.1)
+        discard;
+    return float4(albedo.rgb * AmbientColor.rgb, 1.0);
+}
+
 float4 PS_Lighting(VSQOut IN) : SV_TARGET
 {
     float2 uv = IN.uv;
@@ -145,7 +157,7 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
     }
     float3 normalSample = gNormalTex.Sample(samLinear, uv).xyz;
     float3 worldNormal = normalize(normalSample * 2.0 - 1.0);
-    float3 result = albedo.rgb * AmbientColor.rgb;
+    float3 result = float3(0, 0, 0);
     if (LightType == 0)  // Directional
     {
         float3 Ldir = normalize(-LightDir.xyz);

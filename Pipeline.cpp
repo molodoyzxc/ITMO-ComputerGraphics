@@ -19,7 +19,7 @@ Pipeline::Pipeline(DX12Framework* framework)
 
 void Pipeline::Init()
 {
-    Microsoft::WRL::ComPtr<ID3DBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, errorBlob;
+    Microsoft::WRL::ComPtr<ID3DBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob, errorBlob;
 
     UINT compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
 #if defined(_DEBUG)
@@ -87,6 +87,17 @@ void Pipeline::Init()
         L"Deferred.hlsl", nullptr, nullptr,
         "PS_Lighting", "ps_5_0", compileFlags, 0,
         &psLight, &errorBlob
+    );
+    if (FAILED(hr) && errorBlob) {
+        OutputDebugStringA("Compile PS lightning error:\n");
+        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+    }
+    ThrowIfFailed(hr);
+
+    hr = D3DCompileFromFile(
+        L"Deferred.hlsl", nullptr, nullptr,
+        "PS_Ambient", "ps_5_0", compileFlags, 0,
+        &psAmbientBlob, &errorBlob
     );
     if (FAILED(hr) && errorBlob) {
         OutputDebugStringA("Compile PS lightning error:\n");
@@ -171,10 +182,11 @@ void Pipeline::Init()
     ));
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC geoDesc = opaqueDesc;
-    geoDesc.NumRenderTargets = 3;
+    geoDesc.NumRenderTargets = 4;
     geoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     geoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     geoDesc.RTVFormats[2] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    geoDesc.RTVFormats[3] = DXGI_FORMAT_R32G32B32A32_FLOAT;
     geoDesc.VS = { vsG->GetBufferPointer(), vsG->GetBufferSize() };
     geoDesc.PS = { psG->GetBufferPointer(), psG->GetBufferSize() };
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
@@ -182,10 +194,11 @@ void Pipeline::Init()
     ));
 
     srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
-    CD3DX12_ROOT_PARAMETER deferredParams[3];
+    CD3DX12_ROOT_PARAMETER deferredParams[4];
     deferredParams[0].InitAsDescriptorTable(1, &srvRange);
     deferredParams[1].InitAsConstantBufferView(1);
-    deferredParams[2].InitAsDescriptorTable(1, &samplerRange);
+    deferredParams[2].InitAsConstantBufferView(2);
+    deferredParams[3].InitAsDescriptorTable(1, &samplerRange);
 
     CD3DX12_ROOT_SIGNATURE_DESC deferredRSDesc;
     deferredRSDesc.Init(
@@ -234,5 +247,37 @@ void Pipeline::Init()
     defDesc.SampleDesc.Count = 1;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &defDesc, IID_PPV_ARGS(&m_deferredPSO)
+    ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC ambientDesc = defDesc;
+    D3D12_BLEND_DESC blendReplace = {};
+    blendReplace.AlphaToCoverageEnable = FALSE;
+    blendReplace.IndependentBlendEnable = FALSE;
+
+    auto& rt0 = blendReplace.RenderTarget[0];
+    rt0.BlendEnable = TRUE;
+    rt0.LogicOpEnable = FALSE;
+
+    rt0.SrcBlend = D3D12_BLEND_ONE;
+    rt0.DestBlend = D3D12_BLEND_ZERO;
+    rt0.BlendOp = D3D12_BLEND_OP_ADD;
+
+    rt0.SrcBlendAlpha = D3D12_BLEND_ONE;
+    rt0.DestBlendAlpha = D3D12_BLEND_ZERO;
+    rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD; 
+
+    rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    ambientDesc.BlendState = blendReplace;
+    ambientDesc.PS = { psAmbientBlob->GetBufferPointer(), psAmbientBlob->GetBufferSize() };
+
+    ambientDesc.NumRenderTargets = 1;
+    ambientDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+    for (int i = 1; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+        ambientDesc.RTVFormats[i] = DXGI_FORMAT_UNKNOWN;
+    }
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &ambientDesc, IID_PPV_ARGS(&m_ambientPSO)
     ));
 }

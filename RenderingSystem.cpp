@@ -7,17 +7,22 @@ struct CB {
     XMFLOAT4X4 World, ViewProj;
 };
 
-struct LightCB {
+struct LightCB 
+{
     int       Type;
     int       pad0[3];
     DirectX::XMFLOAT4 LightDir;
     DirectX::XMFLOAT4 LightColor;
-    DirectX::XMFLOAT4 AmbientColor;
     DirectX::XMFLOAT4 LightPosRange;
     DirectX::XMFLOAT4 SpotDirInnerCos; 
     DirectX::XMFLOAT4 SpotOuterPad;
     DirectX::XMFLOAT4X4 InvViewProj;
     DirectX::XMFLOAT4 ScreenSize;
+};
+
+struct AmbientCB
+{
+    XMFLOAT4 AmbientColor;
 };
 
 static inline void ThrowIfFailed(HRESULT hr)
@@ -162,7 +167,7 @@ void RenderingSystem::SetObjects() {
     //m_objects.push_back(Right);
     //m_objects.push_back(Left);
     m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
-    m_objects.push_back(Sphere);
+    //m_objects.push_back(Sphere);
     //for (SceneObject& obj : m_objects) {
     //    obj.scale = { 0.1f,0.1f,0.1f, };
     //}
@@ -177,6 +182,9 @@ void RenderingSystem::SetObjects() {
     //    };
     //    m_objects.push_back(tmp);
     //}
+    for (SceneObject& obj : m_objects) {
+        obj.CreateBuffers(m_framework->GetDevice(), m_framework->GetCommandList());
+    }
 }
 
 void RenderingSystem::SetLights() 
@@ -186,17 +194,17 @@ void RenderingSystem::SetLights()
     Light red{};
     red.color = { 1.0f,0.0f,0.0f };
     red.position = { 800, 500 ,0 };
-    red.radius = 2000;
+    red.radius = 200;
 
     Light green{};
     green.color = { 0.0f,1.0f,0.0f };
     green.position = { -800, 500, 0 };
-    green.radius = 1000;
+    green.radius = 100;
 
     Light blue{};
     blue.color = { 0.0f,0.0f,1.0f };
     blue.position = { 0.0f,300,0 };
-    blue.radius = 500;
+    blue.radius = 50;
 
     lights.push_back(point);
     lights.push_back(red);
@@ -257,15 +265,11 @@ void RenderingSystem::Initialize()
     auto alloc = m_framework->GetCommandAllocator();
     CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
 
-    SetObjects();
-    SetLights();
-
     alloc->Reset();
     cmdList->Reset(alloc, nullptr);
 
-    for (SceneObject& obj : m_objects) {
-        obj.CreateBuffers(device, cmdList);
-    }
+    SetObjects();
+    SetLights();
 
     ThrowIfFailed(cmdList->Close());
     ID3D12CommandList* lists[] = { cmdList };
@@ -300,6 +304,21 @@ void RenderingSystem::Initialize()
             D3D12_RESOURCE_STATE_GENERIC_READ,
             nullptr,
             IID_PPV_ARGS(&m_lightBuffer)
+        ));
+    }
+
+    {
+        const UINT ambientCBSize = (sizeof(AmbientCB) + 255) & ~255;
+
+        CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(ambientCBSize);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload,
+            D3D12_HEAP_FLAG_NONE,
+            &lightDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&m_ambientBuffer)
         ));
     }
 }
@@ -468,19 +487,32 @@ void RenderingSystem::Render()
     m_framework->SetViewportAndScissors();
 
     cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
-    cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
 
-    {
-        ID3D12DescriptorHeap* defHeaps[] = {
-            m_framework->GetSrvHeap(),
-            m_framework->GetSamplerHeap()
-        };
-        cmd->SetDescriptorHeaps(_countof(defHeaps), defHeaps);
-    }
+    AmbientCB ambientCB = {};
+    ambientCB.AmbientColor = { 0.2f, 0.2f, 0.2f, 0.0f };
+    UINT8* pAmbientData = nullptr;
+    CD3DX12_RANGE writeRange(0, 0);
+    m_ambientBuffer->Map(0, &writeRange, reinterpret_cast<void**>(&pAmbientData));
+    memcpy(pAmbientData, &ambientCB, sizeof(ambientCB));
+    m_ambientBuffer->Unmap(0, nullptr);
+
+    ID3D12DescriptorHeap* defHeaps[] = {
+    m_framework->GetSrvHeap(),
+    m_framework->GetSamplerHeap()
+    };
+    cmd->SetDescriptorHeaps(_countof(defHeaps), defHeaps);
 
     auto srvHandles = m_gbuffer->GetSRVs();
     cmd->SetGraphicsRootDescriptorTable(0, srvHandles[0]);
-    cmd->SetGraphicsRootDescriptorTable(2, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
+    cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
+
+    cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
+    cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
+
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(6, 1, 0, 0);
+
+    cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
 
     const UINT lightCBSize = (sizeof(LightCB) + 255) & ~255;
     BYTE* pLightData = nullptr;
@@ -503,7 +535,6 @@ void RenderingSystem::Render()
         lightCB.Type = light.type;
         lightCB.LightDir = { light.direction.x, light.direction.y, light.direction.z, 0 };
         lightCB.LightColor = { light.color.x,     light.color.y,     light.color.z,     0 };
-        lightCB.AmbientColor = { 0.05f, 0.05f, 0.05f, 0 };
         lightCB.LightPosRange = { light.position.x, light.position.y, light.position.z, light.radius };
         lightCB.SpotDirInnerCos = { light.spotDirection.x, light.spotDirection.y, light.spotDirection.z, light.innerCone() };
         lightCB.SpotOuterPad = { light.outerCone(), 0, 0, 0 };
