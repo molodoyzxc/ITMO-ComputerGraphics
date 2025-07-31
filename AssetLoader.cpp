@@ -147,7 +147,8 @@ UINT AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
         );
     }
-    else {
+    else 
+    {
         hr = DirectX::CreateWICTextureFromFile(
             device,
             uploadBatch,
@@ -253,6 +254,57 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         }
     }
 
+    for (auto& mesh : meshPerMat) {
+        for (auto& v : mesh.vertices) {
+            v.tangent = { 0,0,0 };
+            v.handedness = 0;
+        }
+
+        for (size_t f = 0; f + 2 < mesh.indices.size(); f += 3) {
+            uint32_t i0 = mesh.indices[f + 0];
+            uint32_t i1 = mesh.indices[f + 1];
+            uint32_t i2 = mesh.indices[f + 2];
+
+            auto& v0 = mesh.vertices[i0];
+            auto& v1 = mesh.vertices[i1];
+            auto& v2 = mesh.vertices[i2];
+
+            XMVECTOR p0 = XMLoadFloat3(&v0.Pos);
+            XMVECTOR p1 = XMLoadFloat3(&v1.Pos);
+            XMVECTOR p2 = XMLoadFloat3(&v2.Pos);
+
+            XMVECTOR uv0 = XMLoadFloat2(&v0.uv);
+            XMVECTOR uv1 = XMLoadFloat2(&v1.uv);
+            XMVECTOR uv2 = XMLoadFloat2(&v2.uv);
+
+            XMVECTOR edge1 = p1 - p0;
+            XMVECTOR edge2 = p2 - p0;
+            XMVECTOR duv1 = uv1 - uv0;
+            XMVECTOR duv2 = uv2 - uv0;
+
+            float r = 1.0f / (XMVectorGetX(duv1) * XMVectorGetY(duv2) - XMVectorGetX(duv2) * XMVectorGetY(duv1));
+            XMVECTOR T = (edge1 * XMVectorGetY(duv2) - edge2 * XMVectorGetY(duv1)) * r;
+            XMVECTOR B = (edge2 * XMVectorGetX(duv1) - edge1 * XMVectorGetX(duv2)) * r;
+
+            XMVECTOR t0 = XMLoadFloat3(&v0.tangent) + T;
+            XMVECTOR t1 = XMLoadFloat3(&v1.tangent) + T;
+            XMVECTOR t2 = XMLoadFloat3(&v2.tangent) + T;
+            XMStoreFloat3(&v0.tangent, t0);
+            XMStoreFloat3(&v1.tangent, t1);
+            XMStoreFloat3(&v2.tangent, t2);
+
+            XMVECTOR n0 = XMLoadFloat3(&v0.Normal);
+            float h = XMVectorGetX(XMVector3Dot(XMVector3Cross(edge1, edge2), B)) < 0.0f ? -1.0f : 1.0f;
+            v0.handedness = v1.handedness = v2.handedness = h;
+        }
+
+        for (auto& v : mesh.vertices) {
+            XMVECTOR t = XMLoadFloat3(&v.tangent);
+            t = XMVector3Normalize(t);
+            XMStoreFloat3(&v.tangent, t);
+        }
+    }
+
     std::vector<SceneObject> sceneObjects;
     sceneObjects.reserve(M);
 
@@ -273,6 +325,21 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         obj.material.specular = { m.specular[0],  m.specular[1],  m.specular[2] };
         obj.material.shininess = m.shininess;
         obj.material.diffuseTexPath = m.diffuse_texname;
+        obj.material.normalTexPath =
+            !m.bump_texname.empty() ? m.bump_texname
+            : !m.normal_texname.empty() ? m.normal_texname
+            : "";
+
+        obj.material.displacementTexPath =
+            !m.displacement_texname.empty() ? m.displacement_texname
+            : !m.displacement_texname.empty() ? m.displacement_texname
+            : "";
+
+        obj.material.roughnessTexPath = m.roughness_texname;
+        obj.material.metallicTexPath = m.metallic_texname;
+        obj.material.aoTexPath = !m.ambient_texname.empty()
+            ? m.ambient_texname
+            : m.ambient_texname;
 
         sceneObjects.push_back(std::move(obj));
     }

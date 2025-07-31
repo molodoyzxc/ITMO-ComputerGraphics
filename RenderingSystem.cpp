@@ -2,6 +2,7 @@
 #include "AssetLoader.h"
 #include "FrustumPlane.h"
 #include <filesystem>
+#include <iostream>
 
 struct CB {
     XMFLOAT4X4 World, ViewProj;
@@ -25,6 +26,16 @@ struct AmbientCB
     XMFLOAT4 AmbientColor;
 };
 
+struct TessCB
+{
+    XMFLOAT3 cameraPos;
+    float heightScale;
+    float minDist;
+    float maxDist;
+    float minTess;
+    float maxTess;
+};
+
 static inline void ThrowIfFailed(HRESULT hr)
 {
     if (FAILED(hr))
@@ -32,7 +43,7 @@ static inline void ThrowIfFailed(HRESULT hr)
 }
 
 void RenderingSystem::KeyboardControl() {
-    const float rotationSpeed = 0.05f;
+    const float rotationSpeed = 0.03f;
 
     if (m_input->IsKeyDown(Keys::Left))  m_yaw -= rotationSpeed;
     if (m_input->IsKeyDown(Keys::Right)) m_yaw += rotationSpeed;
@@ -47,10 +58,16 @@ void RenderingSystem::KeyboardControl() {
     XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
     float acceleration;
-    if (m_input->IsKeyDown(Keys::LeftShift)) {
+    if (m_input->IsKeyDown(Keys::LeftShift))
+    {
         acceleration = 3.0f;
     }
-    else {
+    else if (m_input->IsKeyDown(Keys::CapsLock))
+    {
+        acceleration = 0.1f;
+    }
+    else
+    {
         acceleration = 1.0f;
     }
 
@@ -117,17 +134,15 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
 }
 
 void RenderingSystem::SetObjects() {
-    Mesh mesh = loader.LoadGeometry("Assets\\sphere.obj");
+    Mesh mesh = loader.LoadGeometry("Assets\\Bread\\3DBread004_HQ-4K-JPG.obj");
     Material material;
 
     SceneObject Model = {
         CreateCube(),
-        {1.0f,1.0f,1.0f,1.0f},
-        {-1,-1,0,},
         {0,0,0,},
-        {2.0f,2.0f,2.0f,},
+        {-30,0,0,},
+        {1.0f,1.0f,1.0f,},
     };
-    Model.textureID = 5;
 
     SceneObject Cube = {
         CreateCube(),
@@ -166,11 +181,11 @@ void RenderingSystem::SetObjects() {
     //m_objects.push_back(Cube);
     //m_objects.push_back(Right);
     //m_objects.push_back(Left);
-    m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
-    //m_objects.push_back(Sphere);
-    //for (SceneObject& obj : m_objects) {
-    //    obj.scale = { 0.1f,0.1f,0.1f, };
-    //}
+    m_objects = loader.LoadSceneObjects("Assets\\Can\\Gas_can.obj");
+
+    for (SceneObject& obj : m_objects) {
+        obj.scale = { 100.0f, 100.0f, 100.0f };
+    }
 
     // culling test
     //for (int i = 0; i < 5; i++) {
@@ -182,6 +197,7 @@ void RenderingSystem::SetObjects() {
     //    };
     //    m_objects.push_back(tmp);
     //}
+
     for (SceneObject& obj : m_objects) {
         obj.CreateBuffers(m_framework->GetDevice(), m_framework->GetCommandList());
     }
@@ -190,6 +206,7 @@ void RenderingSystem::SetObjects() {
 void RenderingSystem::SetLights() 
 {
     Light point {};
+    point.spotDirection = {0,0,1};
 
     Light red{};
     red.color = { 1.0f,0.0f,0.0f };
@@ -207,45 +224,131 @@ void RenderingSystem::SetLights()
     blue.radius = 50;
 
     lights.push_back(point);
-    lights.push_back(red);
-    lights.push_back(green);
-    lights.push_back(blue);
+    //lights.push_back(red);
+    //lights.push_back(green);
+    //lights.push_back(blue);
 }
 
-void RenderingSystem::LoadTextures() 
+void RenderingSystem::LoadTextures()
 {
     ID3D12Device* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
-
-    std::filesystem::path sceneObjPath = "Assets\\Sponza\\sponza.obj";
-    std::filesystem::path sceneFolder = sceneObjPath.parent_path();
+    std::filesystem::path sceneFolder = L"Assets\\Can";
 
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
     UINT whiteIdx = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
+    UINT flatNormalIdx = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\flat_normal.png");
+
+    auto makeFullPath = [&](const std::string& rel) {
+        std::filesystem::path filename = std::filesystem::path(rel).filename();
+        return sceneFolder / filename;
+        };
 
     for (auto& obj : m_objects) {
-        const std::string& relTex = obj.material.diffuseTexPath;
-        if (relTex.empty()) {
-            obj.textureID = whiteIdx;
+        // diffuse
+        {
+            auto p = makeFullPath(obj.material.diffuseTexPath);
+            std::wcout << L"[Diffuse] " << p.wstring() << std::endl;
+            if (!std::filesystem::exists(p)) {
+                std::wcerr << L"Missing: " << p.wstring() << std::endl;
+                obj.diffuseTexID = whiteIdx;
+            }
+            else {
+                obj.diffuseTexID = loader.LoadTexture(
+                    device, uploadBatch, m_framework,
+                    p.wstring().c_str()
+                );
+            }
         }
-        else {
-            std::filesystem::path texName = std::filesystem::path(relTex).filename();
-            std::filesystem::path fullPath = sceneFolder / texName;
-            obj.textureID = loader.LoadTexture(
-                device,
-                uploadBatch,
-                m_framework,
-                fullPath.wstring().c_str()
-            );
+
+        // normal
+        {
+            auto rel = obj.material.normalTexPath;
+            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
+            std::wcout << L"[Normal]  "
+                << (rel.empty() ? L"<empty>" : p.wstring())
+                << std::endl;
+            if (rel.empty() || !std::filesystem::exists(p))
+                obj.normalTexID = flatNormalIdx;
+            else
+                obj.normalTexID = loader.LoadTexture(
+                    device, uploadBatch, m_framework,
+                    p.wstring().c_str()
+                );
+        }
+
+        // height
+        {
+            auto rel = obj.material.displacementTexPath;
+            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
+            std::wcout << L"[Normal]  "
+                << (rel.empty() ? L"<empty>" : p.wstring())
+                << std::endl;
+            if (rel.empty() || !std::filesystem::exists(p))
+                obj.dispTexID = flatNormalIdx;
+            else
+                obj.dispTexID = loader.LoadTexture(
+                    device, uploadBatch, m_framework,
+                    p.wstring().c_str()
+                );
+        }
+
+        // roughness
+        {
+            auto rel = obj.material.roughnessTexPath;
+            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
+            std::wcout << L"[Normal]  "
+                << (rel.empty() ? L"<empty>" : p.wstring())
+                << std::endl;
+            if (rel.empty() || !std::filesystem::exists(p))
+                obj.roughnessTexID = flatNormalIdx;
+            else
+                obj.roughnessTexID = loader.LoadTexture(
+                    device, uploadBatch, m_framework,
+                    p.wstring().c_str()
+                );
+        }
+
+        // metallic
+        {
+            auto rel = obj.material.metallicTexPath;
+            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
+            std::wcout << L"[Normal]  "
+                << (rel.empty() ? L"<empty>" : p.wstring())
+                << std::endl;
+            if (rel.empty() || !std::filesystem::exists(p))
+                obj.metallicTexID = flatNormalIdx;
+            else
+                obj.metallicTexID = loader.LoadTexture(
+                    device, uploadBatch, m_framework,
+                    p.wstring().c_str()
+                );
+        }
+
+        // AO
+        {
+            auto rel = obj.material.aoTexPath;
+            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
+            std::wcout << L"[Normal]  "
+                << (rel.empty() ? L"<empty>" : p.wstring())
+                << std::endl;
+            if (rel.empty() || !std::filesystem::exists(p))
+                obj.aoTexID = flatNormalIdx;
+            else
+                obj.aoTexID = loader.LoadTexture(
+                    device, uploadBatch, m_framework,
+                    p.wstring().c_str()
+                );
         }
     }
 
     auto finish = uploadBatch.End(m_framework->GetCommandQueue());
     finish.wait();
 }
+
 
 void RenderingSystem::Initialize()
 {
@@ -321,11 +424,43 @@ void RenderingSystem::Initialize()
             IID_PPV_ARGS(&m_ambientBuffer)
         ));
     }
+
+    {
+        const UINT ambientCBSize = (sizeof(AmbientCB) + 255) & ~255;
+
+        CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(ambientCBSize);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload,
+            D3D12_HEAP_FLAG_NONE,
+            &lightDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&m_ambientBuffer)
+        ));
+    }
+
+    {
+        const UINT tessCbSize = (sizeof(TessCB) + 255) & ~255;
+        CD3DX12_RESOURCE_DESC tessDesc = CD3DX12_RESOURCE_DESC::Buffer(tessCbSize);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload,
+            D3D12_HEAP_FLAG_NONE,
+            &tessDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&m_tessBuffer)
+        ));
+
+        CD3DX12_RANGE readRange(0, 0);
+        ThrowIfFailed(m_tessBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_pTessCbData)));
+    }
 }
 
 void RenderingSystem::Update(float dt)
 {
-    m_objects.back().position = lights[0].position;
+    //m_objects.back().position = lights[0].position;
 
     if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
     if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
@@ -382,8 +517,30 @@ void RenderingSystem::Render()
     XMVECTOR up = XMVectorSet(0, 1, 0, 0);
     XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
     float aspect = static_cast<float>(m_framework->GetWidth()) / m_framework->GetHeight();
-    XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 5000.f);
+    XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500000.f);
     XMMATRIX viewProj = view * proj;
+
+    TessCB tc;
+
+    const UINT tcSize = (sizeof(tc) + 255) & ~255;
+    m_pTessCbData = nullptr;
+    {
+        CD3DX12_RANGE readRange(0, 0);
+        ThrowIfFailed(
+            m_tessBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_pTessCbData))
+        );
+    }
+
+    tc.cameraPos = { m_cameraX, m_cameraY, m_cameraZ };
+    tc.heightScale = 20.0f;
+    tc.minDist = 50.0f;
+    tc.maxDist = 500.0f;
+    tc.maxTess = 32.0f;
+    tc.minTess = 1.0f;
+    memcpy(m_pTessCbData, &tc, sizeof(tc));
+
+    m_tessBuffer->Unmap(0, nullptr);
+
 
     XMFLOAT4 frustumPlanes[6];
     ExtractFrustumPlanes(frustumPlanes, viewProj);
@@ -431,7 +588,6 @@ void RenderingSystem::Render()
     }
     m_constantBuffer->Unmap(0, nullptr);
 
-    cmd->IASetPrimitiveTopology(D3D10_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     {
         ID3D12DescriptorHeap* heaps2[] = {
             m_framework->GetSrvHeap(),
@@ -449,6 +605,18 @@ void RenderingSystem::Render()
             switchedToTransparent = true;
         }
 
+        bool useTess = (obj->material.displacementTexPath.size() > 0);
+        if (useTess)
+        {
+            cmd->SetPipelineState(m_pipeline.GetGBufferTessellationPSO());
+            cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+        }
+        else
+        {
+            cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
+            cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        }
+
         cmd->SetGraphicsRootConstantBufferView(
             0,
             m_constantBuffer->GetGPUVirtualAddress() + i * cbSize
@@ -459,16 +627,22 @@ void RenderingSystem::Render()
             m_lightBuffer->GetGPUVirtualAddress()
         );
 
+        cmd->SetGraphicsRootConstantBufferView(
+            2,
+            m_tessBuffer->GetGPUVirtualAddress()
+        );
+
         CD3DX12_GPU_DESCRIPTOR_HANDLE texH(
             m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            obj->textureID,
+            obj->diffuseTexID,
             m_framework->GetSrvDescriptorSize()
         );
-        cmd->SetGraphicsRootDescriptorTable(2, texH);
+        cmd->SetGraphicsRootDescriptorTable(3, texH);
+
         CD3DX12_GPU_DESCRIPTOR_HANDLE sampH(
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
         );
-        cmd->SetGraphicsRootDescriptorTable(3, sampH);
+        cmd->SetGraphicsRootDescriptorTable(4, sampH);
 
         cmd->IASetVertexBuffers(0, 1, &obj->vbView);
         cmd->IASetIndexBuffer(&obj->ibView);

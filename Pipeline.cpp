@@ -6,6 +6,7 @@
 #include <windows.h>
 #include "Vertexes.h"
 #pragma comment(lib, "d3dcompiler.lib")
+#include <dxcapi.h>
 
 inline void ThrowIfFailed(HRESULT hr)
 {
@@ -19,107 +20,44 @@ Pipeline::Pipeline(DX12Framework* framework)
 
 void Pipeline::Init()
 {
-    Microsoft::WRL::ComPtr<ID3DBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob, errorBlob;
-
     UINT compileFlags = D3DCOMPILE_ENABLE_STRICTNESS;
 #if defined(_DEBUG)
     compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
-    HRESULT hr;
+    ComPtr<IDxcBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob;
+    Compile(L"Deferred.hlsl", L"VSMain", L"vs_6_0", vsBlob);
+    Compile(L"Deferred.hlsl", L"PSMain", L"ps_6_0", psBlob);
+    Compile(L"Deferred.hlsl", L"VS_GBuffer", L"vs_6_0", vsG);
+    Compile(L"Deferred.hlsl", L"PS_GBuffer", L"ps_6_0", psG);
+    Compile(L"Deferred.hlsl", L"VS_Quad", L"vs_6_0", vsQuad);
+    Compile(L"Deferred.hlsl", L"PS_Lighting", L"ps_6_0", psLight);
+    Compile(L"Deferred.hlsl", L"PS_Ambient", L"ps_6_0", psAmbientBlob);
 
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "VSMain", "vs_5_0", compileFlags, 0,
-        &vsBlob, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile VSMain error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "PSMain", "ps_5_0", compileFlags, 0,
-        &psBlob, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile PSMain error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "VS_GBuffer", "vs_5_0", compileFlags, 0,
-        &vsG, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile VS gbuffer error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "PS_GBuffer", "ps_5_0", compileFlags, 0,
-        &psG, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile PS gbuffer error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "VS_Quad", "vs_5_0", compileFlags, 0,
-        &vsQuad, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile VS quad error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "PS_Lighting", "ps_5_0", compileFlags, 0,
-        &psLight, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile PS lightning error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    hr = D3DCompileFromFile(
-        L"Deferred.hlsl", nullptr, nullptr,
-        "PS_Ambient", "ps_5_0", compileFlags, 0,
-        &psAmbientBlob, &errorBlob
-    );
-    if (FAILED(hr) && errorBlob) {
-        OutputDebugStringA("Compile PS lightning error:\n");
-        OutputDebugStringA((char*)errorBlob->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
+    ComPtr<IDxcBlob> vsTessBlob, hsTessBlob, dsTessBlob, psTessBlob;
+    Compile(L"Tessellation.hlsl", L"VSMain", L"vs_6_0", vsTessBlob);
+    Compile(L"Tessellation.hlsl", L"HSMain", L"hs_6_0", hsTessBlob);
+    Compile(L"Tessellation.hlsl", L"DSMain", L"ds_6_0", dsTessBlob);
+    Compile(L"Tessellation.hlsl", L"PSMain", L"ps_6_0", psTessBlob);
 
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TANGENT",  0, DXGI_FORMAT_R32G32B32_FLOAT, 0,32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "HAND",     0, DXGI_FORMAT_R32_FLOAT,      0,44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     CD3DX12_DESCRIPTOR_RANGE srvRange, samplerRange;
-    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0);
     samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
 
-    CD3DX12_ROOT_PARAMETER slotParam[4];
-    slotParam[0].InitAsConstantBufferView(0);
-    slotParam[1].InitAsConstantBufferView(1);
-    slotParam[2].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
-    slotParam[3].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_PIXEL);
+    CD3DX12_ROOT_PARAMETER slotParam[5];
+    slotParam[0].InitAsConstantBufferView(0, D3D12_SHADER_VISIBILITY_ALL);
+    slotParam[1].InitAsConstantBufferView(1, D3D12_SHADER_VISIBILITY_ALL);
+    slotParam[2].InitAsConstantBufferView(3, D3D12_SHADER_VISIBILITY_ALL);
+    slotParam[3].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_ALL);
+    slotParam[4].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_ALL);
 
     CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc;
     rootSigDesc.Init(
@@ -191,6 +129,17 @@ void Pipeline::Init()
     geoDesc.PS = { psG->GetBufferPointer(), psG->GetBufferSize() };
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &geoDesc, IID_PPV_ARGS(&m_gBufferPSO)
+    ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC gbTessDesc = geoDesc;
+    gbTessDesc.VS = { vsTessBlob->GetBufferPointer(), vsTessBlob->GetBufferSize() };
+    gbTessDesc.HS = { hsTessBlob->GetBufferPointer(), hsTessBlob->GetBufferSize() };
+    gbTessDesc.DS = { dsTessBlob->GetBufferPointer(), dsTessBlob->GetBufferSize() };
+    gbTessDesc.PS = { psG->GetBufferPointer(), psG->GetBufferSize() };
+    gbTessDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+    //gbTessDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &gbTessDesc, IID_PPV_ARGS(&m_gBufferTessellationPSO)
     ));
 
     srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
@@ -280,4 +229,43 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &ambientDesc, IID_PPV_ARGS(&m_ambientPSO)
     ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC tessDesc = opaqueDesc;
+    tessDesc.pRootSignature = m_rootSignature.Get();
+    tessDesc.VS = { vsTessBlob->GetBufferPointer(), vsTessBlob->GetBufferSize() };
+    tessDesc.HS = { hsTessBlob->GetBufferPointer(), hsTessBlob->GetBufferSize() };
+    tessDesc.DS = { dsTessBlob->GetBufferPointer(), dsTessBlob->GetBufferSize() };
+    tessDesc.PS = { psTessBlob->GetBufferPointer(), psTessBlob->GetBufferSize() }; 
+    tessDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &tessDesc, IID_PPV_ARGS(&m_tessellationPSO)
+    ));
+}
+
+void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)
+{
+    ComPtr<IDxcLibrary>  library;
+    ComPtr<IDxcCompiler> compiler;
+    DxcCreateInstance(CLSID_DxcLibrary, IID_PPV_ARGS(&library));
+    DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler));
+
+    ComPtr<IDxcBlobEncoding> source;
+    library->CreateBlobFromFile(file, nullptr, &source);
+    ComPtr<IDxcOperationResult> result;
+    compiler->Compile(
+        source.Get(),
+        file,
+        entry, target,
+        nullptr, 0, nullptr, 0, nullptr,
+        &result
+    );
+    HRESULT hr;
+    result->GetStatus(&hr);
+    if (FAILED(hr)) {
+        ComPtr<IDxcBlobEncoding> errors;
+        result->GetErrorBuffer(&errors);
+        OutputDebugStringA((char*)errors->GetBufferPointer());
+        throw std::runtime_error("DXC compile failed");
+    }
+    result->GetResult(&outBlob);
 }

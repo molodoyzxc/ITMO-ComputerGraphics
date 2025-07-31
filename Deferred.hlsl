@@ -38,6 +38,8 @@ struct VSInput
     float3 pos : POSITION;
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
+    float3 tangent : TANGENT;
+    float handed : HAND;
 };
 
 struct VSOutput
@@ -46,6 +48,8 @@ struct VSOutput
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
     float4 worldPos : TEXCOORD1;
+    float3 tangent : TANGENT;
+    float handed : HAND;
 };
 
 struct GBufferOut
@@ -65,6 +69,8 @@ VSOutput VS_GBuffer(VSInput IN)
     OUT.posH.y *= -1;
     OUT.normal = normalize(mul((float3x3) World, IN.normal));
     OUT.uv = IN.uv;
+    OUT.tangent = normalize(mul((float3x3) World, IN.tangent));
+    OUT.handed = IN.handed;
     return OUT;
 }
 
@@ -74,10 +80,15 @@ GBufferOut PS_GBuffer(VSOutput IN)
     OUT.Albedo = diffuseMap.Sample(samLinear, IN.uv);
     clip(OUT.Albedo.a - 0.1);
 
-    OUT.Normal = float4(normalize(IN.normal) * 0.5 + 0.5, 0);
+    float3 nMap = gNormalTex.Sample(samLinear, IN.uv).xyz * 2.0 - 1.0;
+    float3 N = normalize(IN.normal);
+    float3 T = normalize(IN.tangent);
+    float3 B = cross(N, T) * IN.handed;
+    float3 worldN_map = normalize(nMap.x * T + nMap.y * B + nMap.z * N);
+    float3 worldN = lerp(N, worldN_map, 1); // 1 - use, 0 - not use
+    OUT.Normal = float4(worldN * 0.5 + 0.5, 0);
     OUT.Params = float4(1, 0, 0, 0);
     OUT.WorldPos = IN.worldPos;
-
     return OUT;
 }
 

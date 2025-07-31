@@ -11,7 +11,14 @@
 struct SceneObject {
     Mesh mesh;
     XMFLOAT4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
-    UINT textureID = 0;
+    
+    UINT diffuseTexID = 0;
+    UINT normalTexID = 0;
+    UINT dispTexID = 0;
+    UINT roughnessTexID = 0;
+    UINT metallicTexID = 0;
+    UINT aoTexID = 0;
+
     Material material;
     XMFLOAT3 bsCenter;
     float bsRadius;
@@ -34,7 +41,7 @@ struct SceneObject {
         XMFLOAT3 rot,
         XMFLOAT3 scl)
         : mesh(m)
-        , textureID(0)
+        , diffuseTexID(0)
         , position(pos)
         , rotation(rot)
         , scale(scl)
@@ -48,7 +55,7 @@ struct SceneObject {
         XMFLOAT3 scl)
         : mesh(m)
         , Color(color)
-        , textureID(0)
+        , diffuseTexID(0)
         , position(pos)
         , rotation(rot)
         , scale(scl)
