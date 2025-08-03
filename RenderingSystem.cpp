@@ -117,22 +117,12 @@ void RenderingSystem::CountFPS()
 {
     static float fpsAccumulator = 0.0f;
     static int frameCount = 0;
-
     fpsAccumulator += timer.GetElapsedSeconds();
     frameCount++;
 
     if (fpsAccumulator >= 1.0f)
     {
-        float fps = frameCount / fpsAccumulator;
-
-        wchar_t msg[128];
-        swprintf_s(msg, L"[FPS] %.2f\n", fps);
-        OutputDebugStringW(msg);
-
-        wchar_t buffer[128];
-        swprintf_s(buffer, L"[CAMERA] X: %.2f Y: %.2f Z: %.2f\n", m_cameraX, m_cameraY, m_cameraZ);
-        OutputDebugStringW(buffer);
-
+        m_currentFPS = frameCount / fpsAccumulator;
         frameCount = 0;
         fpsAccumulator = 0.0f;
     }
@@ -456,8 +446,8 @@ void RenderingSystem::Update(float dt)
     KeyboardControl();
 }
 
-float heightScale = 2.0f;
-float maxTess = 4.0f;
+float heightScale = 0.0f;
+float maxTess = 1.0f;
 int wire = 0;
 
 void RenderingSystem::Render()
@@ -518,12 +508,12 @@ void RenderingSystem::Render()
     }
 
     {
-        ImGui::Begin("Tessallation");
+        ImGui::Begin("Tessallation", FALSE);
 
         ImGui::InputFloat("Height scale", &heightScale, 1.0f);
         ImGui::InputFloat("Max tess", &maxTess, 1.0f);
         ImGui::InputInt("Wireframe", &wire);
-        ImGui::Text("Wire = %d", wire);
+        ImGui::Text("FPS: %f", m_currentFPS);
 
         ImGui::End();
     }

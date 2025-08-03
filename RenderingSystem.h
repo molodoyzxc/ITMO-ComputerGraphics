@@ -46,6 +46,7 @@ private:
     float m_cameraX, m_cameraY, m_cameraZ;
     float m_lightX, m_lightY, m_lightZ;
     float m_yaw, m_pitch;
+    float m_currentFPS = 0.0f;
 
     void KeyboardControl();
     void SetObjects();

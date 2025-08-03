@@ -122,50 +122,45 @@ DSOutput DSMain(
 {
     DSOutput o;
     
-    float3 pos = patch[0].worldPos * bary.x
-                  + patch[1].worldPos * bary.y
-                  + patch[2].worldPos * bary.z;
-    float3 normal = normalize(
-                      patch[0].worldNormal * bary.x
-                    + patch[1].worldNormal * bary.y
-                    + patch[2].worldNormal * bary.z);
-    float3 tangent = normalize(
-                      patch[0].worldT * bary.x
-                    + patch[1].worldT * bary.y
-                    + patch[2].worldT * bary.z);
-    float handedness = patch[0].handedness;
-
+    float3 worldPos = patch[0].worldPos * bary.x
+                    + patch[1].worldPos * bary.y
+                    + patch[2].worldPos * bary.z;
+    
+    float3 worldNormal = normalize(
+                           patch[0].worldNormal * bary.x
+                         + patch[1].worldNormal * bary.y
+                         + patch[2].worldNormal * bary.z);
+    
+    float3 worldTangent = normalize(
+                            patch[0].worldT * bary.x
+                          + patch[1].worldT * bary.y
+                          + patch[2].worldT * bary.z);
+    
+    float handedness = patch[0].handedness * bary.x
+                     + patch[1].handedness * bary.y
+                     + patch[2].handedness * bary.z;
+    
     float2 uv = patch[0].uv * bary.x
               + patch[1].uv * bary.y
               + patch[2].uv * bary.z;
     
     float height = gDisplacementMap.SampleLevel(samLinear, uv, 0).r * heightScale;
-    pos += normal * height;
+    worldPos += worldNormal * height;
     
-    float4 clip = mul(ViewProj, float4(pos, 1.0f));
-    clip.y *= -1.0f;
-
-    o.posH = clip;
+    float4 clipPos = mul(ViewProj, float4(worldPos, 1.0f));
+    clipPos.y *= -1.0f;
+    
+    o.posH = clipPos;
+    o.normal = worldNormal;
     o.uv = uv;
-    o.worldPos = float4(pos, 1.0f);
-    o.normal = normal;
-    o.tangent = tangent;
+    o.worldPos = float4(worldPos, 1.0f);
+    o.tangent = worldTangent;
     o.handed = handedness;
+    
     return o;
 }
 
 float4 PSMain(DSOutput IN) : SV_TARGET
 {
-    float3 N = normalize(IN.normal);
-    float3 T = normalize(IN.tangent);
-    float3 B = cross(N, T) * IN.handed;
-    
-    float3 nMap = gNormalMap.SampleLevel(samLinear, IN.uv, 0).xyz * 2.0f - 1.0f;
-    float3 worldN = normalize(nMap.x * T + nMap.y * B + nMap.z * N);
-    
-    float3 lightDir = normalize(float3(0.0f, 1.0f, 0.0f));
-    float diff = saturate(dot(worldN, lightDir));
-    float4 albedo = gDiffuseMap.SampleLevel(samLinear, IN.uv, 0);
-
-    return albedo * diff;
+    return float4(1, 0, 1, 1);
 }
