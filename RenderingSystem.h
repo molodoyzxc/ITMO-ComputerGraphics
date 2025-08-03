@@ -52,4 +52,5 @@ private:
     void SetLights();
     void LoadTextures();
     void CountFPS();
+    void LoadErrorTextures();
 };

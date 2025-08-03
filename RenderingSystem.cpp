@@ -3,6 +3,21 @@
 #include "FrustumPlane.h"
 #include <filesystem>
 #include <iostream>
+#include "imgui.h"
+#include "imgui_impl_dx12.h"
+#include "imgui_impl_win32.h"
+
+
+struct ErrorTextures
+{
+    UINT white;
+    UINT roughness;
+    UINT metallic;
+    UINT normal;
+    UINT height;
+    UINT abmientOcclusion;
+    UINT diffuse;
+} errorTextures;
 
 struct CB {
     XMFLOAT4X4 World, ViewProj;
@@ -128,7 +143,7 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     , m_input(input)
     , m_pipeline(framework)
     , m_cameraX(0), m_cameraY(500), m_cameraZ(0) // начальная позиция камеры
-    , m_lightX(0), m_lightY(-10), m_lightZ(0)   // начальное направление света
+    , m_lightX(0), m_lightY(-1), m_lightZ(0)   // начальное направление света
     , m_yaw(0), m_pitch(0)                       // углы поворота камеры
 {
 }
@@ -181,10 +196,10 @@ void RenderingSystem::SetObjects() {
     //m_objects.push_back(Cube);
     //m_objects.push_back(Right);
     //m_objects.push_back(Left);
-    m_objects = loader.LoadSceneObjects("Assets\\Can\\Gas_can.obj");
+    m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
 
     for (SceneObject& obj : m_objects) {
-        obj.scale = { 100.0f, 100.0f, 100.0f };
+        obj.scale = { 1.0f, 1.0f, 1.0f };
     }
 
     // culling test
@@ -205,8 +220,10 @@ void RenderingSystem::SetObjects() {
 
 void RenderingSystem::SetLights() 
 {
-    Light point {};
-    point.spotDirection = {0,0,1};
+    Light light {};
+    light.type = 0;
+    light.spotDirection = {0,0,1};
+    light.direction = {0.0f,-1.0f,0.0f};
 
     Light red{};
     red.color = { 1.0f,0.0f,0.0f };
@@ -223,10 +240,28 @@ void RenderingSystem::SetLights()
     blue.position = { 0.0f,300,0 };
     blue.radius = 50;
 
-    lights.push_back(point);
+    lights.push_back(light);
     //lights.push_back(red);
     //lights.push_back(green);
     //lights.push_back(blue);
+}
+
+void RenderingSystem::LoadErrorTextures()
+{
+    ID3D12Device* device = m_framework->GetDevice();
+    DirectX::ResourceUploadBatch uploadBatch(device);
+    uploadBatch.Begin();
+
+    errorTextures.white = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\white.jpg");
+    errorTextures.normal = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\flat_normal.jpg");
+    errorTextures.height = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorHeight.jpg");
+    errorTextures.metallic = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorMetallic.jpg");
+    errorTextures.roughness = errorTextures.white;
+    errorTextures.abmientOcclusion = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\black.jpg");
+    errorTextures.diffuse = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorDiffuse.jpg");
+
+    auto finish = uploadBatch.End(m_framework->GetCommandQueue());
+    finish.wait();
 }
 
 void RenderingSystem::LoadTextures()
@@ -234,115 +269,56 @@ void RenderingSystem::LoadTextures()
     ID3D12Device* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
-    std::filesystem::path sceneFolder = L"Assets\\Can";
+    std::filesystem::path sceneFolder = L"Assets\\Sponza";
 
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    UINT whiteIdx = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\white.jpg");
-    UINT flatNormalIdx = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\flat_normal.png");
-
-    auto makeFullPath = [&](const std::string& rel) {
-        std::filesystem::path filename = std::filesystem::path(rel).filename();
-        return sceneFolder / filename;
+    auto makeFullPath = [&](const std::string& rel,
+        std::filesystem::path& outUsed) -> bool
+        {
+            if (rel.empty()) return false;
+            std::filesystem::path p1 = sceneFolder / std::filesystem::path(rel);
+            if (std::filesystem::exists(p1)) {
+                outUsed = p1;
+                return true;
+            }
+            std::filesystem::path p2 = sceneFolder / std::filesystem::path(rel).filename();
+            if (std::filesystem::exists(p2)) {
+                outUsed = p2;
+                return true;
+            }
+            return false;
         };
 
-    for (auto& obj : m_objects) {
-        // diffuse
+    auto safeLoad = [&](const std::string& rel, UINT fallbackIdx, UINT error) -> UINT
         {
-            auto p = makeFullPath(obj.material.diffuseTexPath);
-            std::wcout << L"[Diffuse] " << p.wstring() << std::endl;
-            if (!std::filesystem::exists(p)) {
-                std::wcerr << L"Missing: " << p.wstring() << std::endl;
-                obj.diffuseTexID = whiteIdx;
+            std::filesystem::path fullPath;
+            if (makeFullPath(rel, fullPath))
+            {
+                try {
+                    return loader.LoadTexture(
+                        device, uploadBatch, m_framework,
+                        fullPath.wstring().c_str()
+                    );
+                }
+                catch (const std::exception& e) {
+                    std::wcerr << L"[Error] failed to load " << fullPath.wstring()
+                        << L": " << e.what() << std::endl;
+                    return error;
+                }
             }
-            else {
-                obj.diffuseTexID = loader.LoadTexture(
-                    device, uploadBatch, m_framework,
-                    p.wstring().c_str()
-                );
-            }
-        }
+            return fallbackIdx;
+        };
 
-        // normal
-        {
-            auto rel = obj.material.normalTexPath;
-            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
-            std::wcout << L"[Normal]  "
-                << (rel.empty() ? L"<empty>" : p.wstring())
-                << std::endl;
-            if (rel.empty() || !std::filesystem::exists(p))
-                obj.normalTexID = flatNormalIdx;
-            else
-                obj.normalTexID = loader.LoadTexture(
-                    device, uploadBatch, m_framework,
-                    p.wstring().c_str()
-                );
-        }
-
-        // height
-        {
-            auto rel = obj.material.displacementTexPath;
-            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
-            std::wcout << L"[Normal]  "
-                << (rel.empty() ? L"<empty>" : p.wstring())
-                << std::endl;
-            if (rel.empty() || !std::filesystem::exists(p))
-                obj.dispTexID = flatNormalIdx;
-            else
-                obj.dispTexID = loader.LoadTexture(
-                    device, uploadBatch, m_framework,
-                    p.wstring().c_str()
-                );
-        }
-
-        // roughness
-        {
-            auto rel = obj.material.roughnessTexPath;
-            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
-            std::wcout << L"[Normal]  "
-                << (rel.empty() ? L"<empty>" : p.wstring())
-                << std::endl;
-            if (rel.empty() || !std::filesystem::exists(p))
-                obj.roughnessTexID = flatNormalIdx;
-            else
-                obj.roughnessTexID = loader.LoadTexture(
-                    device, uploadBatch, m_framework,
-                    p.wstring().c_str()
-                );
-        }
-
-        // metallic
-        {
-            auto rel = obj.material.metallicTexPath;
-            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
-            std::wcout << L"[Normal]  "
-                << (rel.empty() ? L"<empty>" : p.wstring())
-                << std::endl;
-            if (rel.empty() || !std::filesystem::exists(p))
-                obj.metallicTexID = flatNormalIdx;
-            else
-                obj.metallicTexID = loader.LoadTexture(
-                    device, uploadBatch, m_framework,
-                    p.wstring().c_str()
-                );
-        }
-
-        // AO
-        {
-            auto rel = obj.material.aoTexPath;
-            auto p = rel.empty() ? std::filesystem::path() : makeFullPath(rel);
-            std::wcout << L"[Normal]  "
-                << (rel.empty() ? L"<empty>" : p.wstring())
-                << std::endl;
-            if (rel.empty() || !std::filesystem::exists(p))
-                obj.aoTexID = flatNormalIdx;
-            else
-                obj.aoTexID = loader.LoadTexture(
-                    device, uploadBatch, m_framework,
-                    p.wstring().c_str()
-                );
-        }
+    for (auto& obj : m_objects)
+    {
+        obj.diffuseTexID = safeLoad(obj.material.diffuseTexPath, errorTextures.white, errorTextures.diffuse);
+        obj.normalTexID = safeLoad(obj.material.normalTexPath, errorTextures.normal, errorTextures.normal);
+        obj.dispTexID = safeLoad(obj.material.displacementTexPath, errorTextures.height, errorTextures.height);
+        obj.roughnessTexID = safeLoad(obj.material.roughnessTexPath, errorTextures.white, errorTextures.white);
+        obj.metallicTexID = safeLoad(obj.material.metallicTexPath, errorTextures.metallic, errorTextures.metallic);
+        obj.aoTexID = safeLoad(obj.material.aoTexPath, errorTextures.abmientOcclusion, errorTextures.abmientOcclusion);
     }
 
     auto finish = uploadBatch.End(m_framework->GetCommandQueue());
@@ -395,7 +371,7 @@ void RenderingSystem::Initialize()
 
     {
         const UINT lightCBSize = (sizeof(LightCB) + 255) & ~255;
-        const UINT maxLights = 64;
+        const UINT maxLights = lights.size();
         const UINT totalSize = lightCBSize * maxLights;
 
         CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
@@ -480,6 +456,10 @@ void RenderingSystem::Update(float dt)
     KeyboardControl();
 }
 
+float heightScale = 2.0f;
+float maxTess = 4.0f;
+int wire = 0;
+
 void RenderingSystem::Render()
 {
     timer.Tick();
@@ -488,9 +468,15 @@ void RenderingSystem::Render()
     ThrowIfFailed(cmd->Reset(alloc, nullptr));
     m_framework->BeginFrame();
 
+    ImGui_ImplDX12_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+
     m_gbuffer->Bind(cmd);
     float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
     m_gbuffer->Clear(cmd, clearG);
+
+
 
     m_framework->SetViewportAndScissors();
 
@@ -531,12 +517,24 @@ void RenderingSystem::Render()
         );
     }
 
+    {
+        ImGui::Begin("Tessallation");
+
+        ImGui::InputFloat("Height scale", &heightScale, 1.0f);
+        ImGui::InputFloat("Max tess", &maxTess, 1.0f);
+        ImGui::InputInt("Wireframe", &wire);
+        ImGui::Text("Wire = %d", wire);
+
+        ImGui::End();
+    }
+
     tc.cameraPos = { m_cameraX, m_cameraY, m_cameraZ };
-    tc.heightScale = 20.0f;
-    tc.minDist = 50.0f;
-    tc.maxDist = 500.0f;
-    tc.maxTess = 32.0f;
+    tc.heightScale = heightScale;
+    tc.minDist = 5000.0f;
+    tc.maxDist = 10000.0f;
+    tc.maxTess = maxTess;
     tc.minTess = 1.0f;
+
     memcpy(m_pTessCbData, &tc, sizeof(tc));
 
     m_tessBuffer->Unmap(0, nullptr);
@@ -605,10 +603,17 @@ void RenderingSystem::Render()
             switchedToTransparent = true;
         }
 
-        bool useTess = (obj->material.displacementTexPath.size() > 0);
+        bool useTess = (obj->dispTexID != errorTextures.height);
         if (useTess)
         {
-            cmd->SetPipelineState(m_pipeline.GetGBufferTessellationPSO());
+            if (wire)
+            {
+                cmd->SetPipelineState(m_pipeline.GetGBufferTessellationWireframePSO());
+            }
+            else
+            {   
+                cmd->SetPipelineState(m_pipeline.GetGBufferTessellationPSO());
+            }
             cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
         }
         else
@@ -725,6 +730,9 @@ void RenderingSystem::Render()
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmd->DrawInstanced(6, 1, 0, 0);
     }
+
+    ImGui::Render();
+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     m_framework->EndFrame();
 }

@@ -1,4 +1,5 @@
 ﻿#include "Window.h"
+#include "imgui.h"
 
 Window::Window(HINSTANCE hInstance, int nCmdShow,
     const std::wstring& title, int width, int height)
@@ -76,8 +77,13 @@ LRESULT CALLBACK Window::WndProcThunk(
         : DefWindowProc(hWnd, message, wParam, lParam);
 }
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 inline LRESULT Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, message, wParam, lParam))
+        return true;
+
     switch (message)
     {
     case WM_DESTROY:

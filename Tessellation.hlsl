@@ -94,17 +94,23 @@ PatchConstantData PatchConstants(InputPatch<VSOutput, 3> patch)
     float3 w0 = mul(World, float4(patch[0].pos, 1)).xyz;
     float3 w1 = mul(World, float4(patch[1].pos, 1)).xyz;
     float3 w2 = mul(World, float4(patch[2].pos, 1)).xyz;
-    float3 ctr = (w0 + w1 + w2) / 3.0f;
-    float d = distance(ctr, cameraPos);
-    
-    float t = saturate((d - minDist) / (maxDist - minDist));
-    float f = lerp(maxTess, minTess, t);
 
     PatchConstantData pcd;
-    pcd.edges[0] = f;
-    pcd.edges[1] = f;
-    pcd.edges[2] = f;
-    pcd.inside = f;
+    float d, t;
+  
+    d = distance((w0 + w1) * 0.5, cameraPos);
+    t = saturate((d - minDist) / (maxDist - minDist));
+    pcd.edges[0] = lerp(maxTess, minTess, t);
+    
+    d = distance((w1 + w2) * 0.5, cameraPos);
+    t = saturate((d - minDist) / (maxDist - minDist));
+    pcd.edges[1] = lerp(maxTess, minTess, t);
+    
+    d = distance((w2 + w0) * 0.5, cameraPos);
+    t = saturate((d - minDist) / (maxDist - minDist));
+    pcd.edges[2] = lerp(maxTess, minTess, t);
+    
+    pcd.inside = (pcd.edges[0] + pcd.edges[1] + pcd.edges[2]) / 3;
     return pcd;
 }
 

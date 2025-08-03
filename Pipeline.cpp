@@ -137,9 +137,14 @@ void Pipeline::Init()
     gbTessDesc.DS = { dsTessBlob->GetBufferPointer(), dsTessBlob->GetBufferSize() };
     gbTessDesc.PS = { psG->GetBufferPointer(), psG->GetBufferSize() };
     gbTessDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
-    //gbTessDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &gbTessDesc, IID_PPV_ARGS(&m_gBufferTessellationPSO)
+    ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC gbTessWireDesc = gbTessDesc;
+    gbTessWireDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &gbTessWireDesc, IID_PPV_ARGS(&m_gBufferTessellationWireframePSO)
     ));
 
     srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);

@@ -261,41 +261,47 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         }
 
         for (size_t f = 0; f + 2 < mesh.indices.size(); f += 3) {
-            uint32_t i0 = mesh.indices[f + 0];
-            uint32_t i1 = mesh.indices[f + 1];
-            uint32_t i2 = mesh.indices[f + 2];
-
+            uint32_t i0 = mesh.indices[f], i1 = mesh.indices[f + 1], i2 = mesh.indices[f + 2];
             auto& v0 = mesh.vertices[i0];
             auto& v1 = mesh.vertices[i1];
             auto& v2 = mesh.vertices[i2];
 
-            XMVECTOR p0 = XMLoadFloat3(&v0.Pos);
-            XMVECTOR p1 = XMLoadFloat3(&v1.Pos);
-            XMVECTOR p2 = XMLoadFloat3(&v2.Pos);
+            float duv1x = v1.uv.x - v0.uv.x;
+            float duv1y = v1.uv.y - v0.uv.y;
+            float duv2x = v2.uv.x - v0.uv.x;
+            float duv2y = v2.uv.y - v0.uv.y;
 
-            XMVECTOR uv0 = XMLoadFloat2(&v0.uv);
-            XMVECTOR uv1 = XMLoadFloat2(&v1.uv);
-            XMVECTOR uv2 = XMLoadFloat2(&v2.uv);
+            float det = duv1x * duv2y - duv2x * duv1y;
+            XMVECTOR T, B;
+            float H;
 
-            XMVECTOR edge1 = p1 - p0;
-            XMVECTOR edge2 = p2 - p0;
-            XMVECTOR duv1 = uv1 - uv0;
-            XMVECTOR duv2 = uv2 - uv0;
+            if (fabs(det) < 1e-6f) {
+                T = XMVectorSet(1, 0, 0, 0);
+                B = XMVectorSet(0, 1, 0, 0);
+                H = 1.0f;
+            }
+            else {
+                float invDet = 1.0f / det;
+                XMVECTOR p0 = XMLoadFloat3(&v0.Pos);
+                XMVECTOR p1 = XMLoadFloat3(&v1.Pos);
+                XMVECTOR p2 = XMLoadFloat3(&v2.Pos);
+                XMVECTOR edge1 = p1 - p0;
+                XMVECTOR edge2 = p2 - p0;
 
-            float r = 1.0f / (XMVectorGetX(duv1) * XMVectorGetY(duv2) - XMVectorGetX(duv2) * XMVectorGetY(duv1));
-            XMVECTOR T = (edge1 * XMVectorGetY(duv2) - edge2 * XMVectorGetY(duv1)) * r;
-            XMVECTOR B = (edge2 * XMVectorGetX(duv1) - edge1 * XMVectorGetX(duv2)) * r;
+                T = (edge1 * duv2y - edge2 * duv1y) * invDet;
+                B = (edge2 * duv1x - edge1 * duv2x) * invDet;
+                H = XMVectorGetX(XMVector3Dot(XMVector3Cross(edge1, edge2), B)) < 0 ? -1.0f : 1.0f;
+            }
 
-            XMVECTOR t0 = XMLoadFloat3(&v0.tangent) + T;
-            XMVECTOR t1 = XMLoadFloat3(&v1.tangent) + T;
-            XMVECTOR t2 = XMLoadFloat3(&v2.tangent) + T;
+            XMVECTOR t0 = XMVector3Normalize(XMLoadFloat3(&v0.tangent) + T);
+            XMVECTOR t1 = XMVector3Normalize(XMLoadFloat3(&v1.tangent) + T);
+            XMVECTOR t2 = XMVector3Normalize(XMLoadFloat3(&v2.tangent) + T);
+
             XMStoreFloat3(&v0.tangent, t0);
             XMStoreFloat3(&v1.tangent, t1);
             XMStoreFloat3(&v2.tangent, t2);
 
-            XMVECTOR n0 = XMLoadFloat3(&v0.Normal);
-            float h = XMVectorGetX(XMVector3Dot(XMVector3Cross(edge1, edge2), B)) < 0.0f ? -1.0f : 1.0f;
-            v0.handedness = v1.handedness = v2.handedness = h;
+            v0.handedness = v1.handedness = v2.handedness = H;
         }
 
         for (auto& v : mesh.vertices) {

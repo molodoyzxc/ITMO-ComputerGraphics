@@ -23,6 +23,7 @@ DX12Framework::DX12Framework(HWND hwnd, UINT width, UINT height)
 DX12Framework::~DX12Framework()
 {
     WaitForGpu();
+
     CloseHandle(m_fenceEvent);
 }
 
@@ -35,8 +36,6 @@ void DX12Framework::Init()
     CreateRenderTargetViews();  // RTV для бэкбуферов
     CreateDepthResources();     // буфер глубины
 }
-
-
 
 // ID3D12Device
 void DX12Framework::CreateDevice()
@@ -316,7 +315,8 @@ void DX12Framework::EndFrame()
     ID3D12CommandList* lists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
 
-    ThrowIfFailed(m_swapChain->Present(1, 0));
+    //ThrowIfFailed(m_swapChain->Present(0, 0)); //vsync off
+    ThrowIfFailed(m_swapChain->Present(1, 0)); //vsync on
     m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
 
     const UINT64 fenceToWaitFor = ++m_fenceValue;

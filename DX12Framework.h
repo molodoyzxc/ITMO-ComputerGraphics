@@ -53,6 +53,8 @@ public:
     }
     UINT AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE type, UINT count);
     UINT GetWhiteTextureSrvIndex() const { return m_whiteSrvIndex; }
+    UINT GetFrameCount() { return FrameCount; }
+    UINT& GetBackBufferIndex() { return m_backBufferIndex; }
 
 
 private:
