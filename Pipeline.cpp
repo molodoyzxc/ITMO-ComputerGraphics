@@ -47,10 +47,14 @@ void Pipeline::Init()
         { "HAND",     0, DXGI_FORMAT_R32_FLOAT,      0,44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
-    CD3DX12_DESCRIPTOR_RANGE srvRange, samplerRange;
-    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0);
+    CD3DX12_DESCRIPTOR_RANGE samplerRange;
     samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
 
+    const UINT MaxSrv = m_framework->GetSrvHeap()->GetDesc().NumDescriptors;
+    
+    CD3DX12_DESCRIPTOR_RANGE srvRange;
+    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MaxSrv, 0);
+    
     CD3DX12_ROOT_PARAMETER slotParam[6];
     slotParam[0].InitAsConstantBufferView(0, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[1].InitAsConstantBufferView(1, D3D12_SHADER_VISIBILITY_ALL);

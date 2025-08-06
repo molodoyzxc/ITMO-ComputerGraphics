@@ -14,9 +14,20 @@ cbuffer TessCB : register(b3)
     float maxTess;
 };
 
-Texture2D gDiffuseMap : register(t0);
-Texture2D gNormalMap : register(t1);
-Texture2D gDisplacementMap : register(t2);
+cbuffer MaterialCB : register(b4)
+{
+    float useNormalMap; // 0 – geometry, 1 – normal map
+    uint diffuseIdx;
+    uint normalIdx;
+    uint dispIdx;
+    uint roughIdx;
+    uint metalIdx;
+    uint aoIdx;
+    float pad[1];
+};
+
+static const uint MAX_SRV = 100; // DX12Framework::srvDesc.NumDescriptors
+Texture2D<float4> gTextures[MAX_SRV] : register(t0);
 SamplerState samLinear : register(s0);
 
 struct VSInput
@@ -144,7 +155,7 @@ DSOutput DSMain(
               + patch[1].uv * bary.y
               + patch[2].uv * bary.z;
     
-    float height = gDisplacementMap.SampleLevel(samLinear, uv, 0).r * heightScale;
+    float height = gTextures[dispIdx].SampleLevel(samLinear, uv, 0).r * heightScale;
     worldPos += worldNormal * height;
     
     float4 clipPos = mul(ViewProj, float4(worldPos, 1.0f));

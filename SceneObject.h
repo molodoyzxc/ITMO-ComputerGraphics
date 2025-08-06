@@ -12,12 +12,13 @@ struct SceneObject {
     Mesh mesh;
     XMFLOAT4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
     
-    UINT diffuseTexID = 0;
-    UINT normalTexID = 0;
-    UINT dispTexID = 0;
-    UINT roughnessTexID = 0;
-    UINT metallicTexID = 0;
-    UINT aoTexID = 0;
+    UINT texIdx[6];
+    // 0 - diff
+    // 1 - normal
+    // 2 - disp
+    // 3 - rough
+    // 4 - metallic
+    // 5 - AO
 
     Material material;
     XMFLOAT3 bsCenter;
@@ -36,30 +37,17 @@ struct SceneObject {
 
     SceneObject() = default;
 
-    SceneObject(const Mesh& m,
+    explicit SceneObject(
+        Mesh mesh,
         XMFLOAT3 pos,
         XMFLOAT3 rot,
-        XMFLOAT3 scl)
-        : mesh(m)
-        , diffuseTexID(0)
-        , position(pos)
-        , rotation(rot)
-        , scale(scl)
+        XMFLOAT3 scale
+    )
     {
-    }
-
-    SceneObject(const Mesh& m,
-        XMFLOAT4 color,
-        XMFLOAT3 pos,
-        XMFLOAT3 rot,
-        XMFLOAT3 scl)
-        : mesh(m)
-        , Color(color)
-        , diffuseTexID(0)
-        , position(pos)
-        , rotation(rot)
-        , scale(scl)
-    {
+        this->mesh = mesh;
+        this->position = pos;
+        this->rotation = rot;
+        this->scale = scale;
     }
 
     DirectX::XMMATRIX GetWorldMatrix() const

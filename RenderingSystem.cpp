@@ -51,10 +51,16 @@ struct TessCB
     float maxTess;
 };
 
-struct NormalCB
+struct MaterialCB
 {
-    float useNormalMap;
-    float pad[3];
+    float useNormalMap; // 0 – geometry, 1 – normal map
+    UINT diffuseIdx;
+    UINT normalIdx;
+    UINT dispIdx;
+    UINT roughIdx;
+    UINT metalIdx;
+    UINT aoIdx;
+    float pad[1];
 };
 
 static inline void ThrowIfFailed(HRESULT hr)
@@ -143,9 +149,8 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
 
 void RenderingSystem::SetObjects() 
 {
-    //m_objects = loader.LoadSceneObjects("Assets\\Wall\\Wall.obj");
+    m_objects = loader.LoadSceneObjects("Assets\\LOD\\bunnyLOD3.obj");
     //m_objects = loader.LoadSceneObjects("Assets\\Can\\Gas_can.obj");
-    m_objects = loader.LoadSceneObjects("Assets\\Bunny\\bunny.obj");
 
     float scale = 100.0f;
     for (SceneObject& obj : m_objects) {
@@ -217,66 +222,49 @@ void RenderingSystem::LoadErrorTextures()
 void RenderingSystem::LoadTextures()
 {
     ID3D12Device* device = m_framework->GetDevice();
-    auto cmdList = m_framework->GetCommandList();
-    auto alloc = m_framework->GetCommandAllocator();
-    //std::filesystem::path sceneFolder = L"Assets\\Wall";
-    //std::filesystem::path sceneFolder = L"Assets\\Can";
-    std::filesystem::path sceneFolder = L"Assets\\Bunny";
-
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
+    std::filesystem::path sceneFolder = L"Assets\\Bunny";
+    //std::filesystem::path sceneFolder = L"Assets\\Can";
+
     auto makeFullPath = [&](const std::string& rel,
-        std::filesystem::path& outUsed) -> bool
-        {
+        std::filesystem::path& out) -> bool {
             if (rel.empty()) return false;
-            std::filesystem::path p1 = sceneFolder / std::filesystem::path(rel);
-            if (std::filesystem::exists(p1)) {
-                outUsed = p1;
-                return true;
-            }
+            std::filesystem::path p1 = sceneFolder / rel;
+            if (std::filesystem::exists(p1)) { out = p1; return true; }
             std::filesystem::path p2 = sceneFolder / std::filesystem::path(rel).filename();
-            if (std::filesystem::exists(p2)) {
-                outUsed = p2;
-                return true;
-            }
+            if (std::filesystem::exists(p2)) { out = p2; return true; }
             return false;
         };
 
-    auto safeLoad = [&](const std::string& rel, UINT fallbackIdx, UINT error) -> UINT
-        {
-            std::filesystem::path fullPath;
-            if (makeFullPath(rel, fullPath))
-            {
-                try {
-                    return loader.LoadTexture(
-                        device, uploadBatch, m_framework,
-                        fullPath.wstring().c_str()
-                    );
-                }
-                catch (const std::exception& e) {
-                    std::wcerr << L"[Error] failed to load " << fullPath.wstring()
-                        << L": " << e.what() << std::endl;
-                    return error;
-                }
+    auto safeLoad = [&](const std::string& rel, UINT fallback, UINT error)->UINT {
+        std::filesystem::path full;
+        if (makeFullPath(rel, full)) {
+            try {
+                return loader.LoadTexture(device, uploadBatch, m_framework,
+                    full.wstring().c_str());
             }
-            return fallbackIdx;
+            catch (...) {
+                return error;
+            }
+        }
+        return fallback;
         };
 
     for (auto& obj : m_objects)
     {
-        obj.diffuseTexID = safeLoad(obj.material.diffuseTexPath, errorTextures.white, errorTextures.diffuse);
-        obj.normalTexID = safeLoad(obj.material.normalTexPath, errorTextures.normal, errorTextures.normal);
-        obj.dispTexID = safeLoad(obj.material.displacementTexPath, errorTextures.height, errorTextures.height);
-        obj.roughnessTexID = safeLoad(obj.material.roughnessTexPath, errorTextures.white, errorTextures.white);
-        obj.metallicTexID = safeLoad(obj.material.metallicTexPath, errorTextures.metallic, errorTextures.metallic);
-        obj.aoTexID = safeLoad(obj.material.aoTexPath, errorTextures.abmientOcclusion, errorTextures.abmientOcclusion);
+        obj.texIdx[0] = safeLoad(obj.material.diffuseTexPath, errorTextures.white, errorTextures.diffuse);
+        obj.texIdx[1] = safeLoad(obj.material.normalTexPath, errorTextures.normal, errorTextures.normal);
+        obj.texIdx[2] = safeLoad(obj.material.displacementTexPath, errorTextures.height, errorTextures.height);
+        obj.texIdx[3] = safeLoad(obj.material.roughnessTexPath, errorTextures.white, errorTextures.roughness);
+        obj.texIdx[4] = safeLoad(obj.material.metallicTexPath, errorTextures.metallic, errorTextures.metallic);
+        obj.texIdx[5] = safeLoad(obj.material.aoTexPath, errorTextures.abmientOcclusion, errorTextures.abmientOcclusion);
     }
 
     auto finish = uploadBatch.End(m_framework->GetCommandQueue());
     finish.wait();
 }
-
 
 void RenderingSystem::Initialize()
 {
@@ -355,9 +343,9 @@ void RenderingSystem::Initialize()
     }
 
     {
-        const UINT normalCBSize = (sizeof(NormalCB) + 255) & ~255;
-
-        CD3DX12_RESOURCE_DESC normalDesc = CD3DX12_RESOURCE_DESC::Buffer(normalCBSize);
+        const UINT MaterialCBSize = (sizeof(MaterialCB) + 255) & ~255;
+        const UINT totalSize = MaterialCBSize * m_objects.size();
+        CD3DX12_RESOURCE_DESC normalDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
 
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload,
@@ -365,7 +353,7 @@ void RenderingSystem::Initialize()
             &normalDesc,
             D3D12_RESOURCE_STATE_GENERIC_READ,
             nullptr,
-            IID_PPV_ARGS(&m_normalBuffer)
+            IID_PPV_ARGS(&m_materialBuffer)
         ));
     }
 
@@ -543,19 +531,6 @@ void RenderingSystem::Render()
         );
     }
 
-    NormalCB norm{};
-    const UINT normalSize = (sizeof(norm) + 255) & ~255;
-    BYTE* pNormalMappedData = nullptr;
-    {
-        CD3DX12_RANGE readRange(0, 0);
-        ThrowIfFailed(
-            m_normalBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pNormalMappedData))
-        );
-    }
-    norm.useNormalMap = use;
-    memcpy(pNormalMappedData, &norm, sizeof(norm));
-    m_normalBuffer->Unmap(0, nullptr);
-
     m_visibleObjects.clear();
     for (UINT i = 0; i < m_objects.size(); ++i)
     {
@@ -577,6 +552,16 @@ void RenderingSystem::Render()
         if (visible) m_visibleObjects.push_back(&m_objects[i]);
     }
 
+    MaterialCB materialCB{};
+    const UINT materialCbSize = (sizeof(materialCB) + 255) & ~255;
+    BYTE* pMaterialMappedData = nullptr;
+    {
+        CD3DX12_RANGE readRange(0, 0);
+        ThrowIfFailed(
+            m_materialBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMaterialMappedData))
+        );
+    }
+
     for (UINT i = 0; i < m_visibleObjects.size(); ++i)
     {
         SceneObject* obj = m_visibleObjects[i];
@@ -586,9 +571,19 @@ void RenderingSystem::Render()
         XMStoreFloat4x4(&cb.World, world);
         XMStoreFloat4x4(&cb.ViewProj, viewProj);
 
+        materialCB.useNormalMap = use;
+        materialCB.diffuseIdx = obj->texIdx[0];
+        materialCB.normalIdx = obj->texIdx[1];
+        materialCB.dispIdx = obj->texIdx[2];
+        materialCB.roughIdx = obj->texIdx[3];
+        materialCB.metalIdx = obj->texIdx[4];
+        materialCB.aoIdx = obj->texIdx[5];
+
         memcpy(pMappedData + i * cbSize, &cb, sizeof(cb));
+        memcpy(pMaterialMappedData + i * materialCbSize, &materialCB, sizeof(materialCB));
     }
     m_constantBuffer->Unmap(0, nullptr);
+    m_materialBuffer->Unmap(0, nullptr);
 
     {
         ID3D12DescriptorHeap* heaps2[] = {
@@ -607,7 +602,7 @@ void RenderingSystem::Render()
             switchedToTransparent = true;
         }
 
-        bool useTess = (obj->dispTexID != errorTextures.height);
+        bool useTess = (obj->texIdx[2] != errorTextures.height);
         if (useTess)
         {
             if (wire)
@@ -641,12 +636,10 @@ void RenderingSystem::Render()
             m_tessBuffer->GetGPUVirtualAddress()
         );
 
-        CD3DX12_GPU_DESCRIPTOR_HANDLE texH(
-            m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
-            obj->diffuseTexID,
-            m_framework->GetSrvDescriptorSize()
+        CD3DX12_GPU_DESCRIPTOR_HANDLE tableStart(
+            m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart()
         );
-        cmd->SetGraphicsRootDescriptorTable(3, texH);
+        cmd->SetGraphicsRootDescriptorTable(3, tableStart);
 
         CD3DX12_GPU_DESCRIPTOR_HANDLE sampH(
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
@@ -655,7 +648,7 @@ void RenderingSystem::Render()
 
         cmd->SetGraphicsRootConstantBufferView(
             5,
-            m_normalBuffer->GetGPUVirtualAddress()
+            m_materialBuffer->GetGPUVirtualAddress() + i * materialCbSize
         );
 
         cmd->IASetVertexBuffers(0, 1, &obj->vbView);
@@ -674,7 +667,7 @@ void RenderingSystem::Render()
     cmd->ClearRenderTargetView(rtv, clearBB, 0, nullptr);
     m_framework->SetViewportAndScissors();
 
-    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
+    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());  
 
     AmbientCB ambientCB = {};
     ambientCB.AmbientColor = { 0.2f, 0.2f, 0.2f, 0.0f };

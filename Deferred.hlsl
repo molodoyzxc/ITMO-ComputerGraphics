@@ -26,18 +26,26 @@ cbuffer AmbientCB : register(b2)
     float4 AmbientColor;
 };
 
-cbuffer NormalToggleCB : register(b4)
+cbuffer MaterialCB : register(b4)
 {
-    float useNormalMap; // 0 — not use 1 — use
-    float3 pad;
+    float useNormalMap; // 0 – geometry, 1 – normal map
+    uint diffuseIdx;
+    uint normalIdx;
+    uint dispIdx;
+    uint roughIdx;
+    uint metalIdx;
+    uint aoIdx;
+    float pad[1];
 };
 
-SamplerState samLinear : register(s0);
-Texture2D diffuseMap : register(t0);
 Texture2D gAlbedoTex : register(t0);
 Texture2D gNormalTex : register(t1);
 Texture2D gParamTex : register(t2);
 Texture2D<float> gDepthTex : register(t3);
+
+static const uint MAX_SRV = 100; // DX12Framework::srvDesc.NumDescriptors
+Texture2D<float4> gTextures[MAX_SRV] : register(t0);
+SamplerState samLinear : register(s0);
 
 struct VSInput
 {
@@ -83,19 +91,26 @@ VSOutput VS_GBuffer(VSInput IN)
 GBufferOut PS_GBuffer(VSOutput IN)
 {
     GBufferOut OUT;
-    OUT.Albedo = diffuseMap.Sample(samLinear, IN.uv);
-    clip(OUT.Albedo.a - 0.1);
+    float2 uv = IN.uv;
+    float4 albedo = gTextures[diffuseIdx].Sample(samLinear, uv);
+    clip(albedo.a - 0.1);
 
-    float3 nMap = gNormalTex.Sample(samLinear, IN.uv).xyz * 2.0 - 1.0;
+    OUT.Albedo = albedo;
+
+    float3 nMap = gTextures[normalIdx].Sample(samLinear, uv).xyz * 2.0 - 1.0;
     nMap.y = -nMap.y;
-    
+
     float3 N = normalize(IN.normal);
     float3 T = normalize(IN.tangent);
     float3 B = cross(N, T) * IN.handed;
-    float3 worldN_map = normalize(nMap.x * T + nMap.y * B + nMap.z * N);
-    float3 worldN = lerp(N, worldN_map, useNormalMap);
+    float3 mapped = normalize(nMap.x * T + nMap.y * B + nMap.z * N);
+    float3 worldN = lerp(N, mapped, useNormalMap);
+
     OUT.Normal = float4(worldN * 0.5 + 0.5, 0);
-    OUT.Params = float4(1, 0, 0, 0);
+    OUT.Params = float4(gTextures[roughIdx].Sample(samLinear, uv).r,
+    gTextures[metalIdx].Sample(samLinear, uv).r,
+    gTextures[aoIdx].Sample(samLinear, uv).r,
+    0);
     OUT.WorldPos = IN.worldPos;
     return OUT;
 }

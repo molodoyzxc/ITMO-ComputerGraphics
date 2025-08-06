@@ -157,7 +157,7 @@ UINT AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
         );
         if (FAILED(hr)) {
             throw std::runtime_error("Create texture from file failed");
-        }
+        }   
     }
 
     auto desc = texture->GetDesc();

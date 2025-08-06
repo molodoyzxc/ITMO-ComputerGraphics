@@ -41,7 +41,7 @@ private:
     ComPtr<ID3D12Resource> m_lightBuffer;
     ComPtr<ID3D12Resource> m_ambientBuffer;
     ComPtr<ID3D12Resource> m_tessBuffer;
-    ComPtr<ID3D12Resource> m_normalBuffer;
+    ComPtr<ID3D12Resource> m_materialBuffer;
     uint8_t* m_pTessCbData = nullptr;
 
     float m_cameraX, m_cameraY, m_cameraZ;
