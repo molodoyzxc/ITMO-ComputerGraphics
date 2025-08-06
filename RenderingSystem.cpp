@@ -51,15 +51,20 @@ struct TessCB
     float maxTess;
 };
 
+struct NormalCB
+{
+    float useNormalMap;
+    float pad[3];
+};
+
 static inline void ThrowIfFailed(HRESULT hr)
 {
     if (FAILED(hr))
         throw std::runtime_error("HRESULT failed");
 }
 
-void RenderingSystem::KeyboardControl() {
-    const float rotationSpeed = 0.03f;
-
+void RenderingSystem::KeyboardControl() 
+{
     if (m_input->IsKeyDown(Keys::Left))  m_yaw -= rotationSpeed;
     if (m_input->IsKeyDown(Keys::Right)) m_yaw += rotationSpeed;
     if (m_input->IsKeyDown(Keys::Up))    m_pitch += rotationSpeed;
@@ -72,21 +77,19 @@ void RenderingSystem::KeyboardControl() {
     XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
     XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
-    float acceleration;
+    float moveSpeed;
     if (m_input->IsKeyDown(Keys::LeftShift))
     {
-        acceleration = 3.0f;
+        moveSpeed = cameraSpeed * acceleration;
     }
     else if (m_input->IsKeyDown(Keys::CapsLock))
     {
-        acceleration = 0.1f;
+        moveSpeed = cameraSpeed * deceleration;
     }
     else
     {
-        acceleration = 1.0f;
+        moveSpeed = cameraSpeed;
     }
-
-    const float moveSpeed = 3.0f * acceleration;
 
     if (m_input->IsKeyDown(Keys::W)) {
         XMVECTOR move = XMVectorScale(forward, moveSpeed);
@@ -138,58 +141,15 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
 {
 }
 
-void RenderingSystem::SetObjects() {
-    Mesh mesh = loader.LoadGeometry("Assets\\Bread\\3DBread004_HQ-4K-JPG.obj");
-    Material material;
+void RenderingSystem::SetObjects() 
+{
+    //m_objects = loader.LoadSceneObjects("Assets\\Wall\\Wall.obj");
+    //m_objects = loader.LoadSceneObjects("Assets\\Can\\Gas_can.obj");
+    m_objects = loader.LoadSceneObjects("Assets\\Bunny\\bunny.obj");
 
-    SceneObject Model = {
-        CreateCube(),
-        {0,0,0,},
-        {-30,0,0,},
-        {1.0f,1.0f,1.0f,},
-    };
-
-    SceneObject Cube = {
-        CreateCube(),
-        {1.0f,1.0f,1.0f,1.0f},
-        {-1,1,0,},
-        {0,0,0,},
-        {2.0f,2.0f,2.0f,},
-    };
-
-    SceneObject Right = {
-        CreateCube(),
-        {1.0f,1.0f,1.0f,1.0f,},
-        {1,1,0,},
-        {0,0,0,},
-        {2.0f,2.0f,2.0f,},
-    };
-
-    SceneObject Left = {
-        CreateCube(),
-        {1.0f,1.0f,1.0f,1.0f,},
-        {1,-1,0,},
-        {0,0,0,},
-        {2.0f,2.0f,2.0f,},
-    };
-
-    SceneObject Sphere = {
-        CreateSphere(),
-        {0,0,0,},
-        {0,0,0,},
-        {10.0f,10.0f,10.0f,},
-    };
-
-    //Model.LoadMaterial("Assets\\12248_Bird_v1_L2.mtl","12248_Bird_v1");
-
-    //m_objects.push_back(Model);
-    //m_objects.push_back(Cube);
-    //m_objects.push_back(Right);
-    //m_objects.push_back(Left);
-    m_objects = loader.LoadSceneObjects("Assets\\Sponza\\sponza.obj");
-
+    float scale = 100.0f;
     for (SceneObject& obj : m_objects) {
-        obj.scale = { 1.0f, 1.0f, 1.0f };
+        obj.scale = { scale, scale, scale };
     }
 
     // culling test
@@ -243,7 +203,7 @@ void RenderingSystem::LoadErrorTextures()
     uploadBatch.Begin();
 
     errorTextures.white = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\white.jpg");
-    errorTextures.normal = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\flat_normal.jpg");
+    errorTextures.normal = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\flat_normal.png");
     errorTextures.height = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorHeight.jpg");
     errorTextures.metallic = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorMetallic.jpg");
     errorTextures.roughness = errorTextures.white;
@@ -259,7 +219,9 @@ void RenderingSystem::LoadTextures()
     ID3D12Device* device = m_framework->GetDevice();
     auto cmdList = m_framework->GetCommandList();
     auto alloc = m_framework->GetCommandAllocator();
-    std::filesystem::path sceneFolder = L"Assets\\Sponza";
+    //std::filesystem::path sceneFolder = L"Assets\\Wall";
+    //std::filesystem::path sceneFolder = L"Assets\\Can";
+    std::filesystem::path sceneFolder = L"Assets\\Bunny";
 
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
@@ -345,6 +307,7 @@ void RenderingSystem::Initialize()
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
 
+    LoadErrorTextures();
     LoadTextures();
 
     // CB
@@ -392,17 +355,17 @@ void RenderingSystem::Initialize()
     }
 
     {
-        const UINT ambientCBSize = (sizeof(AmbientCB) + 255) & ~255;
+        const UINT normalCBSize = (sizeof(NormalCB) + 255) & ~255;
 
-        CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(ambientCBSize);
+        CD3DX12_RESOURCE_DESC normalDesc = CD3DX12_RESOURCE_DESC::Buffer(normalCBSize);
 
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload,
             D3D12_HEAP_FLAG_NONE,
-            &lightDesc,
+            &normalDesc,
             D3D12_RESOURCE_STATE_GENERIC_READ,
             nullptr,
-            IID_PPV_ARGS(&m_ambientBuffer)
+            IID_PPV_ARGS(&m_normalBuffer)
         ));
     }
 
@@ -449,6 +412,9 @@ void RenderingSystem::Update(float dt)
 float heightScale = 0.0f;
 float maxTess = 1.0f;
 int wire = 0;
+float scal = 100.0f;
+XMFLOAT3 rot = { 0.0f, 0.0f, 0.0f };
+float use = 1.0f;
 
 void RenderingSystem::Render()
 {
@@ -462,11 +428,46 @@ void RenderingSystem::Render()
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
+    {
+        ImGui::Begin("Camera");
+
+        ImGui::InputFloat("Camera speed", &cameraSpeed, 1.0f);
+        ImGui::InputFloat("Acceleration", &acceleration, 1.0f);
+        ImGui::InputFloat("Deceleration", &deceleration, 0.05f);
+        ImGui::InputFloat("Rotation speed", &rotationSpeed, 0.01f);
+
+        ImGui::End();
+    }
+
+    {
+        ImGui::Begin("Object");
+
+        ImGui::InputFloat("Rot x degree", &rot.x, 1.0f);
+        ImGui::InputFloat("Rot y degree", &rot.y, 1.0f);
+        ImGui::InputFloat("Rot z degree", &rot.z, 1.0f);
+
+        m_objects[0].rotation = XMFLOAT3
+        {
+            XMConvertToRadians(rot.x),
+            XMConvertToRadians(rot.y),
+            XMConvertToRadians(rot.z),
+        };
+
+        ImGui::InputFloat("Scale", &scal, 5.0f);
+        m_objects[0].scale = { scal, scal, scal };
+
+        ImGui::InputFloat("Pos x", &m_objects[0].position.x, 1.0f);
+        ImGui::InputFloat("Pos y", &m_objects[0].position.y, 1.0f);
+        ImGui::InputFloat("Pos z", &m_objects[0].position.z, 1.0f);
+
+        ImGui::InputFloat("Normal", &use, 1.0f);
+
+        ImGui::End();
+    }
+
     m_gbuffer->Bind(cmd);
     float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
     m_gbuffer->Clear(cmd, clearG);
-
-
 
     m_framework->SetViewportAndScissors();
 
@@ -508,7 +509,7 @@ void RenderingSystem::Render()
     }
 
     {
-        ImGui::Begin("Tessallation", FALSE);
+        ImGui::Begin("Tessallation");
 
         ImGui::InputFloat("Height scale", &heightScale, 1.0f);
         ImGui::InputFloat("Max tess", &maxTess, 1.0f);
@@ -541,6 +542,19 @@ void RenderingSystem::Render()
             m_constantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMappedData))
         );
     }
+
+    NormalCB norm{};
+    const UINT normalSize = (sizeof(norm) + 255) & ~255;
+    BYTE* pNormalMappedData = nullptr;
+    {
+        CD3DX12_RANGE readRange(0, 0);
+        ThrowIfFailed(
+            m_normalBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pNormalMappedData))
+        );
+    }
+    norm.useNormalMap = use;
+    memcpy(pNormalMappedData, &norm, sizeof(norm));
+    m_normalBuffer->Unmap(0, nullptr);
 
     m_visibleObjects.clear();
     for (UINT i = 0; i < m_objects.size(); ++i)
@@ -638,6 +652,11 @@ void RenderingSystem::Render()
             m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
         );
         cmd->SetGraphicsRootDescriptorTable(4, sampH);
+
+        cmd->SetGraphicsRootConstantBufferView(
+            5,
+            m_normalBuffer->GetGPUVirtualAddress()
+        );
 
         cmd->IASetVertexBuffers(0, 1, &obj->vbView);
         cmd->IASetIndexBuffer(&obj->ibView);

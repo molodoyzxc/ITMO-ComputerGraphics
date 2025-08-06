@@ -62,8 +62,8 @@ struct SceneObject {
     {
     }
 
-    DirectX::XMMATRIX GetWorldMatrix() const {
-        using namespace DirectX;
+    DirectX::XMMATRIX GetWorldMatrix() const
+    {
         return XMMatrixScaling(scale.x, scale.y, scale.z) *
             XMMatrixRotationRollPitchYaw(rotation.x, rotation.y, rotation.z) *
             XMMatrixTranslation(position.x, position.y, position.z);

@@ -41,12 +41,18 @@ private:
     ComPtr<ID3D12Resource> m_lightBuffer;
     ComPtr<ID3D12Resource> m_ambientBuffer;
     ComPtr<ID3D12Resource> m_tessBuffer;
+    ComPtr<ID3D12Resource> m_normalBuffer;
     uint8_t* m_pTessCbData = nullptr;
 
     float m_cameraX, m_cameraY, m_cameraZ;
     float m_lightX, m_lightY, m_lightZ;
     float m_yaw, m_pitch;
     float m_currentFPS = 0.0f;
+
+    float cameraSpeed = 3.0f;
+    float acceleration = 3.0f;
+    float deceleration = 0.1f;
+    float rotationSpeed = 0.02f;
 
     void KeyboardControl();
     void SetObjects();

@@ -34,11 +34,10 @@ void Pipeline::Init()
     Compile(L"Deferred.hlsl", L"PS_Lighting", L"ps_6_0", psLight);
     Compile(L"Deferred.hlsl", L"PS_Ambient", L"ps_6_0", psAmbientBlob);
 
-    ComPtr<IDxcBlob> vsTessBlob, hsTessBlob, dsTessBlob, psTessBlob;
+    ComPtr<IDxcBlob> vsTessBlob, hsTessBlob, dsTessBlob;
     Compile(L"Tessellation.hlsl", L"VSMain", L"vs_6_0", vsTessBlob);
     Compile(L"Tessellation.hlsl", L"HSMain", L"hs_6_0", hsTessBlob);
     Compile(L"Tessellation.hlsl", L"DSMain", L"ds_6_0", dsTessBlob);
-    Compile(L"Tessellation.hlsl", L"PSMain", L"ps_6_0", psTessBlob);
 
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -52,12 +51,13 @@ void Pipeline::Init()
     srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0);
     samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
 
-    CD3DX12_ROOT_PARAMETER slotParam[5];
+    CD3DX12_ROOT_PARAMETER slotParam[6];
     slotParam[0].InitAsConstantBufferView(0, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[1].InitAsConstantBufferView(1, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[2].InitAsConstantBufferView(3, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[3].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[4].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_ALL);
+    slotParam[5].InitAsConstantBufferView(4, D3D12_SHADER_VISIBILITY_ALL);
 
     CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc;
     rootSigDesc.Init(
@@ -233,17 +233,6 @@ void Pipeline::Init()
 
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &ambientDesc, IID_PPV_ARGS(&m_ambientPSO)
-    ));
-
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC tessDesc = opaqueDesc;
-    tessDesc.pRootSignature = m_rootSignature.Get();
-    tessDesc.VS = { vsTessBlob->GetBufferPointer(), vsTessBlob->GetBufferSize() };
-    tessDesc.HS = { hsTessBlob->GetBufferPointer(), hsTessBlob->GetBufferSize() };
-    tessDesc.DS = { dsTessBlob->GetBufferPointer(), dsTessBlob->GetBufferSize() };
-    tessDesc.PS = { psTessBlob->GetBufferPointer(), psTessBlob->GetBufferSize() }; 
-    tessDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
-        &tessDesc, IID_PPV_ARGS(&m_tessellationPSO)
     ));
 }
 

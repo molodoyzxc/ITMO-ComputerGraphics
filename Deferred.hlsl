@@ -26,6 +26,12 @@ cbuffer AmbientCB : register(b2)
     float4 AmbientColor;
 };
 
+cbuffer NormalToggleCB : register(b4)
+{
+    float useNormalMap; // 0 — not use 1 — use
+    float3 pad;
+};
+
 SamplerState samLinear : register(s0);
 Texture2D diffuseMap : register(t0);
 Texture2D gAlbedoTex : register(t0);
@@ -81,11 +87,13 @@ GBufferOut PS_GBuffer(VSOutput IN)
     clip(OUT.Albedo.a - 0.1);
 
     float3 nMap = gNormalTex.Sample(samLinear, IN.uv).xyz * 2.0 - 1.0;
+    nMap.y = -nMap.y;
+    
     float3 N = normalize(IN.normal);
     float3 T = normalize(IN.tangent);
     float3 B = cross(N, T) * IN.handed;
     float3 worldN_map = normalize(nMap.x * T + nMap.y * B + nMap.z * N);
-    float3 worldN = lerp(N, worldN_map, 1); // 1 - use, 0 - not use
+    float3 worldN = lerp(N, worldN_map, useNormalMap);
     OUT.Normal = float4(worldN * 0.5 + 0.5, 0);
     OUT.Params = float4(1, 0, 0, 0);
     OUT.WorldPos = IN.worldPos;

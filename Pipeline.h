@@ -20,7 +20,6 @@ public:
     ID3D12PipelineState* GetGBufferPSO()    const { return m_gBufferPSO.Get(); }
     ID3D12RootSignature* GetDeferredRS()   const { return m_deferredRootSig.Get(); }
     ID3D12PipelineState* GetDeferredPSO()  const { return m_deferredPSO.Get(); }
-    ID3D12PipelineState* GetTessellationPSO() const { return m_tessellationPSO.Get(); }
     ID3D12PipelineState* GetAmbientPSO()  const { return m_ambientPSO.Get(); }
     ID3D12PipelineState* GetGBufferTessellationPSO()  const { return m_gBufferTessellationPSO.Get(); }
     ID3D12PipelineState* GetGBufferTessellationWireframePSO()  const { return m_gBufferTessellationWireframePSO.Get(); }
@@ -36,7 +35,6 @@ private:
     ComPtr<ID3D12RootSignature> m_deferredRootSig;
     ComPtr<ID3D12PipelineState> m_deferredPSO;
     ComPtr<ID3D12PipelineState> m_ambientPSO;
-    ComPtr<ID3D12PipelineState> m_tessellationPSO;
     ComPtr<ID3D12PipelineState> m_gBufferTessellationPSO;
     ComPtr<ID3D12PipelineState> m_gBufferTessellationWireframePSO;
 
