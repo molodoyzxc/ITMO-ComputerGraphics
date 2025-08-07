@@ -11,7 +11,7 @@
 struct SceneObject {
     Mesh mesh;
     XMFLOAT4 Color{ 1.0f, 1.0f, 1.0f, 1.0f };
-    
+
     UINT texIdx[6];
     // 0 - diff
     // 1 - normal
@@ -29,11 +29,21 @@ struct SceneObject {
     ComPtr<ID3D12Resource> vertexBufferUpload;
     ComPtr<ID3D12Resource> indexBufferUpload;
     D3D12_VERTEX_BUFFER_VIEW vbView;
-    D3D12_INDEX_BUFFER_VIEW  ibView;
+    D3D12_INDEX_BUFFER_VIEW ibView;
 
-    XMFLOAT3 position;   
-    XMFLOAT3 rotation;    
+    XMFLOAT3 position;
+    XMFLOAT3 rotation;
     XMFLOAT3 scale;
+
+    std::vector<Mesh> lodMeshes;
+    std::vector<ComPtr<ID3D12Resource>> lodVertexBuffers;
+    std::vector<ComPtr<ID3D12Resource>> lodVertexUploads;
+    std::vector<D3D12_VERTEX_BUFFER_VIEW>             lodVBs;
+
+    std::vector<ComPtr<ID3D12Resource>> lodIndexBuffers;
+    std::vector<ComPtr<ID3D12Resource>> lodIndexUploads;
+    std::vector<D3D12_INDEX_BUFFER_VIEW> lodIBs;
+    std::vector<float> lodDistances = { 0.0f,  500.0f,  1000.0f, 1500.0f };
 
     SceneObject() = default;
 
@@ -58,4 +68,15 @@ struct SceneObject {
     }
 public:
     void CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList);
+    void CreateBuffersForMesh(
+        ID3D12Device* device,
+        ID3D12GraphicsCommandList* cmdList,
+        const Mesh& mesh,
+        ComPtr<ID3D12Resource>& outVB,
+        ComPtr<ID3D12Resource>& outVBUpload,
+        D3D12_VERTEX_BUFFER_VIEW& outVBView,
+        ComPtr<ID3D12Resource>& outIB,
+        ComPtr<ID3D12Resource>& outIBUpload,
+        D3D12_INDEX_BUFFER_VIEW& outIBView
+    );
 };

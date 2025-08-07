@@ -99,27 +99,27 @@ void RenderingSystem::KeyboardControl()
 
     if (m_input->IsKeyDown(Keys::W)) {
         XMVECTOR move = XMVectorScale(forward, moveSpeed);
-        m_cameraX += XMVectorGetX(move);
-        m_cameraZ += XMVectorGetZ(move);
+        cameraPos.x += XMVectorGetX(move);
+        cameraPos.z += XMVectorGetZ(move);
     }
     if (m_input->IsKeyDown(Keys::S)) {
         XMVECTOR move = XMVectorScale(forward, -moveSpeed);
-        m_cameraX += XMVectorGetX(move);
-        m_cameraZ += XMVectorGetZ(move);
+        cameraPos.x += XMVectorGetX(move);
+        cameraPos.z += XMVectorGetZ(move);
     }
     if (m_input->IsKeyDown(Keys::A)) {
         XMVECTOR move = XMVectorScale(right, -moveSpeed);
-        m_cameraX += XMVectorGetX(move);
-        m_cameraZ += XMVectorGetZ(move);
+        cameraPos.x += XMVectorGetX(move);
+        cameraPos.z += XMVectorGetZ(move);
     }
     if (m_input->IsKeyDown(Keys::D)) {
         XMVECTOR move = XMVectorScale(right, moveSpeed);
-        m_cameraX += XMVectorGetX(move);
-        m_cameraZ += XMVectorGetZ(move);
+        cameraPos.x += XMVectorGetX(move);
+        cameraPos.z += XMVectorGetZ(move);
     }
 
-    if (m_input->IsKeyDown(Keys::Q)) m_cameraY -= moveSpeed;
-    if (m_input->IsKeyDown(Keys::E)) m_cameraY += moveSpeed;
+    if (m_input->IsKeyDown(Keys::Q)) cameraPos.y -= moveSpeed;
+    if (m_input->IsKeyDown(Keys::E)) cameraPos.y += moveSpeed;
 }
 
 void RenderingSystem::CountFPS()
@@ -141,16 +141,22 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
     , m_input(input)
     , m_pipeline(framework)
-    , m_cameraX(0), m_cameraY(500), m_cameraZ(0) // начальная позиция камеры
-    , m_lightX(0), m_lightY(-1), m_lightZ(0)   // начальное направление света
     , m_yaw(0), m_pitch(0)                       // углы поворота камеры
 {
 }
 
-void RenderingSystem::SetObjects() 
+void RenderingSystem::SetObjects()
 {
-    m_objects = loader.LoadSceneObjects("Assets\\LOD\\bunnyLOD3.obj");
+    m_objects = loader.LoadSceneObjects("Assets\\LOD\\bunnyLOD0.obj");
     //m_objects = loader.LoadSceneObjects("Assets\\Can\\Gas_can.obj");
+
+    SceneObject& obj = m_objects[0];
+    obj.lodMeshes.resize(4);
+    //obj.lodMeshes[0] = loader.LoadGeometry("Assets\\Can\\Gas_can.obj");
+    obj.lodMeshes[0] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD0.obj");
+    obj.lodMeshes[1] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD1.obj");
+    obj.lodMeshes[2] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD2.obj");
+    obj.lodMeshes[3] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD3.obj");
 
     float scale = 100.0f;
     for (SceneObject& obj : m_objects) {
@@ -168,37 +174,42 @@ void RenderingSystem::SetObjects()
     //    m_objects.push_back(tmp);
     //}
 
-    for (SceneObject& obj : m_objects) {
-        obj.CreateBuffers(m_framework->GetDevice(), m_framework->GetCommandList());
+    for (auto& obj : m_objects) {
+        size_t L = obj.lodMeshes.size();
+        obj.lodVertexBuffers.resize(L);
+        obj.lodVertexUploads.resize(L);
+        obj.lodVBs.resize(L);
+        obj.lodIndexBuffers.resize(L);
+        obj.lodIndexUploads.resize(L);
+        obj.lodIBs.resize(L);
+
+        for (size_t i = 0; i < L; ++i) {
+            obj.CreateBuffersForMesh(
+                m_framework->GetDevice(),
+                m_framework->GetCommandList(),
+                obj.lodMeshes[i],
+                obj.lodVertexBuffers[i],
+                obj.lodVertexUploads[i],
+                obj.lodVBs[i],
+                obj.lodIndexBuffers[i],
+                obj.lodIndexUploads[i],
+                obj.lodIBs[i]
+            );
+        }
     }
+
+    auto baseNormals = obj.mesh.vertices[0].Normal;
 }
 
 void RenderingSystem::SetLights() 
 {
     Light light {};
     light.type = 0;
+    light.color = { 1.0f, 1.0f, 1.0f };
     light.spotDirection = {0,0,1};
     light.direction = {0.0f,-1.0f,0.0f};
 
-    Light red{};
-    red.color = { 1.0f,0.0f,0.0f };
-    red.position = { 800, 500 ,0 };
-    red.radius = 200;
-
-    Light green{};
-    green.color = { 0.0f,1.0f,0.0f };
-    green.position = { -800, 500, 0 };
-    green.radius = 100;
-
-    Light blue{};
-    blue.color = { 0.0f,0.0f,1.0f };
-    blue.position = { 0.0f,300,0 };
-    blue.radius = 50;
-
     lights.push_back(light);
-    //lights.push_back(red);
-    //lights.push_back(green);
-    //lights.push_back(blue);
 }
 
 void RenderingSystem::LoadErrorTextures()
@@ -403,6 +414,7 @@ int wire = 0;
 float scal = 100.0f;
 XMFLOAT3 rot = { 0.0f, 0.0f, 0.0f };
 float use = 1.0f;
+float fakeCamera = 0.0f;
 
 void RenderingSystem::Render()
 {
@@ -423,6 +435,7 @@ void RenderingSystem::Render()
         ImGui::InputFloat("Acceleration", &acceleration, 1.0f);
         ImGui::InputFloat("Deceleration", &deceleration, 0.05f);
         ImGui::InputFloat("Rotation speed", &rotationSpeed, 0.01f);
+        ImGui::SliderFloat("Fake cam", &fakeCamera, 0.0f, 2000.0f);
 
         ImGui::End();
     }
@@ -471,7 +484,7 @@ void RenderingSystem::Render()
     }
 
     CB cb{};
-    const XMVECTOR eye = XMVectorSet(m_cameraX, m_cameraY, m_cameraZ, 0);
+    const XMVECTOR eye = XMVectorSet(cameraPos.x, cameraPos.y, cameraPos.z, 0);
     XMVECTOR forwardDir = XMVectorSet(
         cosf(m_pitch) * sinf(m_yaw),
         sinf(m_pitch),
@@ -507,7 +520,7 @@ void RenderingSystem::Render()
         ImGui::End();
     }
 
-    tc.cameraPos = { m_cameraX, m_cameraY, m_cameraZ };
+    tc.cameraPos = cameraPos;
     tc.heightScale = heightScale;
     tc.minDist = 5000.0f;
     tc.maxDist = 10000.0f;
@@ -593,10 +606,22 @@ void RenderingSystem::Render()
         cmd->SetDescriptorHeaps(_countof(heaps2), heaps2);
     }
 
+    XMFLOAT3 fakeCamPos = { 0, 0, fakeCamera };
+
     bool switchedToTransparent = false;
     for (UINT i = 0; i < m_visibleObjects.size(); ++i)
     {
         SceneObject* obj = m_visibleObjects[i];
+
+        //float dist = XMVectorGetX(XMVector3Length(XMLoadFloat3(&cameraPos) - XMLoadFloat3(&obj->position)));
+        float dist = XMVectorGetX(XMVector3Length(XMLoadFloat3(&fakeCamPos) - XMLoadFloat3(&obj->position)));
+        int lod = int(obj->lodDistances.size()) - 1;
+        for (int j = 0; j + 1 < obj->lodDistances.size(); ++j) {
+            if (dist < obj->lodDistances[j + 1]) { lod = j; break; }
+        }
+        obj->mesh.vertices = obj->lodMeshes[lod].vertices;
+        obj->mesh.indices = obj->lodMeshes[lod].indices;
+
         if (!switchedToTransparent && obj->Color.w != 1.0f) {
             cmd->SetPipelineState(m_pipeline.GetTransparentPSO());
             switchedToTransparent = true;
@@ -651,10 +676,10 @@ void RenderingSystem::Render()
             m_materialBuffer->GetGPUVirtualAddress() + i * materialCbSize
         );
 
-        cmd->IASetVertexBuffers(0, 1, &obj->vbView);
-        cmd->IASetIndexBuffer(&obj->ibView);
+        cmd->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
+        cmd->IASetIndexBuffer(&obj->lodIBs[lod]);
         cmd->DrawIndexedInstanced(
-            (UINT)obj->mesh.indices.size(),
+            (UINT)obj->lodMeshes[lod].indices.size(),
             1, 0, 0, 0
         );
     }

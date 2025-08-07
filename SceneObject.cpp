@@ -117,3 +117,111 @@ void SceneObject::CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList*
     XMStoreFloat3(&bsCenter, center);
     bsRadius = radius;
 }
+
+void SceneObject::CreateBuffersForMesh(
+    ID3D12Device* device,
+    ID3D12GraphicsCommandList* cmdList,
+    const Mesh& m,
+    ComPtr<ID3D12Resource>& outVB,
+    ComPtr<ID3D12Resource>& outVBUpload,
+    D3D12_VERTEX_BUFFER_VIEW& outVBView,
+    ComPtr<ID3D12Resource>& outIB,
+    ComPtr<ID3D12Resource>& outIBUpload,
+    D3D12_INDEX_BUFFER_VIEW& outIBView
+)
+{
+    const UINT vbSize = UINT(m.vertices.size() * sizeof(Vertex));
+    const UINT ibSize = UINT(m.indices.size() * sizeof(UINT32));
+
+    {
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        auto desc = CD3DX12_RESOURCE_DESC::Buffer(vbSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault,
+            D3D12_HEAP_FLAG_NONE,
+            &desc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&outVB)
+        ));
+    }
+
+    {
+        CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+        auto desc = CD3DX12_RESOURCE_DESC::Buffer(vbSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload,
+            D3D12_HEAP_FLAG_NONE,
+            &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&outVBUpload)
+        ));
+        void* pData = nullptr;
+        CD3DX12_RANGE readRange(0, 0);
+        outVBUpload->Map(0, &readRange, &pData);
+        memcpy(pData, m.vertices.data(), vbSize);
+        outVBUpload->Unmap(0, nullptr);
+
+        cmdList->CopyBufferRegion(outVB.Get(), 0, outVBUpload.Get(), 0, vbSize);
+        CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            outVB.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
+        );
+        cmdList->ResourceBarrier(1, &barrier);
+    }
+
+    outVBView.BufferLocation = outVB->GetGPUVirtualAddress();
+    outVBView.SizeInBytes = vbSize;
+    outVBView.StrideInBytes = sizeof(Vertex);
+
+    {
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        auto desc = CD3DX12_RESOURCE_DESC::Buffer(ibSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr, IID_PPV_ARGS(&outIB)
+        ));
+    }
+    {
+        CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+        auto desc = CD3DX12_RESOURCE_DESC::Buffer(ibSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr, IID_PPV_ARGS(&outIBUpload)
+        ));
+        void* pData = nullptr;
+        CD3DX12_RANGE readRange(0, 0);
+        outIBUpload->Map(0, &readRange, &pData);
+        memcpy(pData, m.indices.data(), ibSize);
+        outIBUpload->Unmap(0, nullptr);
+
+        cmdList->CopyBufferRegion(outIB.Get(), 0, outIBUpload.Get(), 0, ibSize);
+        CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            outIB.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_INDEX_BUFFER
+        );
+        cmdList->ResourceBarrier(1, &barrier);
+    }
+    outIBView.BufferLocation = outIB->GetGPUVirtualAddress();
+    outIBView.Format = DXGI_FORMAT_R32_UINT;
+    outIBView.SizeInBytes = ibSize;
+
+    DirectX::XMVECTOR vmin = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0);
+    DirectX::XMVECTOR vmax = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0);
+    for (auto& v : mesh.vertices) {
+        XMVECTOR pos = XMLoadFloat3(&v.Pos);
+        vmin = XMVectorMin(vmin, pos);
+        vmax = XMVectorMax(vmax, pos);
+    }
+    XMVECTOR center = 0.5f * (vmin + vmax);
+    XMVECTOR half = 0.5f * (vmax - vmin);
+    float radius = XMVectorGetX(XMVector3Length(half));
+
+    XMStoreFloat3(&bsCenter, center);
+    bsRadius = radius;
+}

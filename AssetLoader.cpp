@@ -19,9 +19,11 @@ Mesh AssetLoader::LoadGeometry(const std::string& objPath)
     std::string warn, err;
 
     bool ok = tinyobj::LoadObj(&attrib, &shapes, nullptr, &warn, &err, objPath.c_str(), nullptr);
+    if (!ok) {
+        throw std::runtime_error("TinyObjLoader error: " + warn + err);
+    }
 
     Mesh mesh;
-
     std::unordered_map<uint64_t, UINT32> uniqueVerts;
     uniqueVerts.reserve(shapes.size() * 3);
 
@@ -35,23 +37,32 @@ Mesh AssetLoader::LoadGeometry(const std::string& objPath)
             if (it == uniqueVerts.end()) {
                 Vertex v{};
                 v.Pos = {
-                  attrib.vertices[3 * idx.vertex_index + 0],
-                  attrib.vertices[3 * idx.vertex_index + 1],
-                  attrib.vertices[3 * idx.vertex_index + 2]
+                    attrib.vertices[3 * idx.vertex_index + 0],
+                    attrib.vertices[3 * idx.vertex_index + 1],
+                    attrib.vertices[3 * idx.vertex_index + 2]
                 };
                 if (idx.normal_index >= 0) {
                     v.Normal = {
-                      attrib.normals[3 * idx.normal_index + 0],
-                      attrib.normals[3 * idx.normal_index + 1],
-                      attrib.normals[3 * idx.normal_index + 2]
+                        attrib.normals[3 * idx.normal_index + 0],
+                        attrib.normals[3 * idx.normal_index + 1],
+                        attrib.normals[3 * idx.normal_index + 2]
                     };
+                }
+                else {
+                    v.Normal = { 0.0f, 0.0f, 0.0f };
                 }
                 if (idx.texcoord_index >= 0) {
                     v.uv = {
-                      attrib.texcoords[2 * idx.texcoord_index + 0],
-                      1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
+                        attrib.texcoords[2 * idx.texcoord_index + 0],
+                        1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
                     };
                 }
+                else {
+                    v.uv = { 0.0f, 0.0f };
+                }
+                v.tangent = { 0.0f, 0.0f, 0.0f };
+                v.handedness = 0.0f;
+
                 UINT32 newIndex = static_cast<UINT32>(mesh.vertices.size());
                 mesh.vertices.push_back(v);
                 mesh.indices.push_back(newIndex);
@@ -63,8 +74,50 @@ Mesh AssetLoader::LoadGeometry(const std::string& objPath)
         }
     }
 
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const auto& i0 = mesh.indices[i + 0];
+        const auto& i1 = mesh.indices[i + 1];
+        const auto& i2 = mesh.indices[i + 2];
+
+        auto& v0 = mesh.vertices[i0];
+        auto& v1 = mesh.vertices[i1];
+        auto& v2 = mesh.vertices[i2];
+
+        float duv1x = v1.uv.x - v0.uv.x;
+        float duv1y = v1.uv.y - v0.uv.y;
+        float duv2x = v2.uv.x - v0.uv.x;
+        float duv2y = v2.uv.y - v0.uv.y;
+
+        float det = duv1x * duv2y - duv2x * duv1y;
+        XMVECTOR T, B;
+        float H;
+        if (fabs(det) < 1e-6f) {
+            T = XMVectorSet(1, 0, 0, 0);
+            B = XMVectorSet(0, 1, 0, 0);
+            H = 1.0f;
+        }
+        else {
+            float invDet = 1.0f / det;
+            XMVECTOR p0 = XMLoadFloat3(&v0.Pos);
+            XMVECTOR p1 = XMLoadFloat3(&v1.Pos);
+            XMVECTOR p2 = XMLoadFloat3(&v2.Pos);
+            XMVECTOR edge1 = p1 - p0;
+            XMVECTOR edge2 = p2 - p0;
+            T = (edge1 * duv2y - edge2 * duv1y) * invDet;
+            B = (edge2 * duv1x - edge1 * duv2x) * invDet;
+            XMVECTOR cross = XMVector3Cross(edge1, edge2);
+            H = XMVectorGetX(XMVector3Dot(cross, B)) < 0 ? -1.0f : 1.0f;
+        }
+        for (auto vi : { i0, i1, i2 }) {
+            XMVECTOR accT = XMLoadFloat3(&mesh.vertices[vi].tangent) + T;
+            XMStoreFloat3(&mesh.vertices[vi].tangent, XMVector3Normalize(accT));
+            mesh.vertices[vi].handedness = H;
+        }
+    }
+
     return mesh;
 }
+
 
 Material AssetLoader::LoadMaterial(const std::string& mtlFile, const std::string& materialName)
 {
