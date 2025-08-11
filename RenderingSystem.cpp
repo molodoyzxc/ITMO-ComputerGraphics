@@ -141,22 +141,19 @@ RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
     , m_input(input)
     , m_pipeline(framework)
-    , m_yaw(0), m_pitch(0)                       // углы поворота камеры
+    , m_yaw(0), m_pitch(0)
 {
 }
 
 void RenderingSystem::SetObjects()
 {
-    m_objects = loader.LoadSceneObjects("Assets\\LOD\\bunnyLOD0.obj");
-    //m_objects = loader.LoadSceneObjects("Assets\\Can\\Gas_can.obj");
-
-    SceneObject& obj = m_objects[0];
-    obj.lodMeshes.resize(4);
-    //obj.lodMeshes[0] = loader.LoadGeometry("Assets\\Can\\Gas_can.obj");
-    obj.lodMeshes[0] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD0.obj");
-    obj.lodMeshes[1] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD1.obj");
-    obj.lodMeshes[2] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD2.obj");
-    obj.lodMeshes[3] = loader.LoadGeometry("Assets\\LOD\\bunnyLOD3.obj");
+    m_objects = loader.LoadSceneObjectsLODs
+    (
+        {
+        "Assets\\Wall\\Wall.obj",
+        },
+        { 0.0f, }
+    );
 
     float scale = 100.0f;
     for (SceneObject& obj : m_objects) {
@@ -197,8 +194,6 @@ void RenderingSystem::SetObjects()
             );
         }
     }
-
-    auto baseNormals = obj.mesh.vertices[0].Normal;
 }
 
 void RenderingSystem::SetLights() 
@@ -236,8 +231,7 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\Bunny";
-    //std::filesystem::path sceneFolder = L"Assets\\Can";
+    std::filesystem::path sceneFolder = L"Assets\\Wall";
 
     auto makeFullPath = [&](const std::string& rel,
         std::filesystem::path& out) -> bool {
@@ -619,8 +613,6 @@ void RenderingSystem::Render()
         for (int j = 0; j + 1 < obj->lodDistances.size(); ++j) {
             if (dist < obj->lodDistances[j + 1]) { lod = j; break; }
         }
-        obj->mesh.vertices = obj->lodMeshes[lod].vertices;
-        obj->mesh.indices = obj->lodMeshes[lod].indices;
 
         if (!switchedToTransparent && obj->Color.w != 1.0f) {
             cmd->SetPipelineState(m_pipeline.GetTransparentPSO());

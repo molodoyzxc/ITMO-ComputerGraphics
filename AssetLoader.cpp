@@ -235,7 +235,8 @@ UINT AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
     return srvIndex;
 }
 
-std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPath) {
+std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPath)
+{
     tinyobj::attrib_t                attrib;
     std::vector<tinyobj::shape_t>    shapes;
     std::vector<tinyobj::material_t> materials;
@@ -404,4 +405,32 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
     }
 
     return sceneObjects;
+}
+
+std::vector<SceneObject> AssetLoader::LoadSceneObjectsLODs(const std::vector<std::string>& objPaths, const std::vector<float>& distances)
+{
+    if (objPaths.empty()) throw std::runtime_error("no LOD paths");
+
+    auto base = LoadSceneObjects(objPaths[0]);
+    for (auto& obj : base) {
+        obj.EnsureDefaultLOD();
+    }
+
+    for (size_t k = 1; k < objPaths.size(); ++k) {
+        auto lodK = LoadSceneObjects(objPaths[k]);
+        for (size_t i = 0; i < base.size(); ++i) {
+            if (i < lodK.size() && !lodK[i].mesh.indices.empty()) {
+                if (base[i].lodMeshes.size() <= k) base[i].lodMeshes.resize(k + 1);
+                base[i].lodMeshes[k] = std::move(lodK[i].mesh);
+            }
+        }
+    }
+
+    if (!objPaths.empty()) {
+        for (auto& obj : base) {
+            if (!distances.empty()) obj.lodDistances = distances;
+        }
+    }
+
+    return base;
 }

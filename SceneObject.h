@@ -43,7 +43,7 @@ struct SceneObject {
     std::vector<ComPtr<ID3D12Resource>> lodIndexBuffers;
     std::vector<ComPtr<ID3D12Resource>> lodIndexUploads;
     std::vector<D3D12_INDEX_BUFFER_VIEW> lodIBs;
-    std::vector<float> lodDistances = { 0.0f,  500.0f,  1000.0f, 1500.0f };
+    std::vector<float> lodDistances = { 0.0f };
 
     SceneObject() = default;
 
@@ -68,6 +68,7 @@ struct SceneObject {
     }
 public:
     void CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList);
+
     void CreateBuffersForMesh(
         ID3D12Device* device,
         ID3D12GraphicsCommandList* cmdList,
@@ -79,4 +80,14 @@ public:
         ComPtr<ID3D12Resource>& outIBUpload,
         D3D12_INDEX_BUFFER_VIEW& outIBView
     );
+
+    void EnsureDefaultLOD() {
+        if (lodMeshes.empty()) {
+            lodMeshes.resize(1);
+            lodMeshes[0] = mesh;
+        }
+        if (lodDistances.empty()) {
+            lodDistances = { 0.0f };
+        }
+    }
 };
