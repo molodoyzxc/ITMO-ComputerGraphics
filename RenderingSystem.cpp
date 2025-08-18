@@ -7,52 +7,30 @@
 #include "imgui_impl_dx12.h"
 #include "imgui_impl_win32.h"
 
+using namespace DirectX;
 
-struct ErrorTextures
-{
-    UINT white;
-    UINT roughness;
-    UINT metallic;
-    UINT normal;
-    UINT height;
-    UINT abmientOcclusion;
-    UINT diffuse;
-} errorTextures;
+struct CB { XMFLOAT4X4 World, ViewProj; };
 
-struct CB {
-    XMFLOAT4X4 World, ViewProj;
+struct LightCB {
+    int Type; int pad0[3];
+    XMFLOAT4 LightDir;
+    XMFLOAT4 LightColor;
+    XMFLOAT4 LightPosRange;
+    XMFLOAT4 SpotDirInnerCos;
+    XMFLOAT4 SpotOuterPad;
+    XMFLOAT4X4 InvViewProj;
+    XMFLOAT4 ScreenSize;
 };
 
-struct LightCB 
-{
-    int       Type;
-    int       pad0[3];
-    DirectX::XMFLOAT4 LightDir;
-    DirectX::XMFLOAT4 LightColor;
-    DirectX::XMFLOAT4 LightPosRange;
-    DirectX::XMFLOAT4 SpotDirInnerCos; 
-    DirectX::XMFLOAT4 SpotOuterPad;
-    DirectX::XMFLOAT4X4 InvViewProj;
-    DirectX::XMFLOAT4 ScreenSize;
+struct AmbientCB { XMFLOAT4 AmbientColor; };
+
+struct TessCB {
+    XMFLOAT3 cameraPos; float heightScale;
+    float minDist; float maxDist;
+    float minTess; float maxTess;
 };
 
-struct AmbientCB
-{
-    XMFLOAT4 AmbientColor;
-};
-
-struct TessCB
-{
-    XMFLOAT3 cameraPos;
-    float heightScale;
-    float minDist;
-    float maxDist;
-    float minTess;
-    float maxTess;
-};
-
-struct MaterialCB
-{
+struct MaterialCB {
     float useNormalMap; // 0 – geometry, 1 – normal map
     UINT diffuseIdx;
     UINT normalIdx;
@@ -63,13 +41,24 @@ struct MaterialCB
     float pad[1];
 };
 
-static inline void ThrowIfFailed(HRESULT hr)
+struct ErrorTextures {
+    UINT white{};
+    UINT roughness{};
+    UINT metallic{};
+    UINT normal{};
+    UINT height{};
+    UINT ambientOcclusion{};
+    UINT diffuse{};
+} errorTextures;
+
+RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
+    : m_framework(framework)
+    , m_input(input)
+    , m_pipeline(framework)
 {
-    if (FAILED(hr))
-        throw std::runtime_error("HRESULT failed");
 }
 
-void RenderingSystem::KeyboardControl() 
+void RenderingSystem::KeyboardControl()
 {
     if (m_input->IsKeyDown(Keys::Left))  m_yaw -= rotationSpeed;
     if (m_input->IsKeyDown(Keys::Right)) m_yaw += rotationSpeed;
@@ -77,46 +66,25 @@ void RenderingSystem::KeyboardControl()
     if (m_input->IsKeyDown(Keys::Down))  m_pitch -= rotationSpeed;
 
     const float limit = XM_PIDIV2 - 0.01f;
-    if (m_pitch > limit)  m_pitch = limit;
-    if (m_pitch < -limit) m_pitch = -limit;
+    m_pitch = std::clamp(m_pitch, -limit, limit);
 
-    XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
-    XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
+    const XMVECTOR forward = XMVectorSet(sinf(m_yaw), 0, cosf(m_yaw), 0);
+    const XMVECTOR right = XMVectorSet(cosf(m_yaw), 0, -sinf(m_yaw), 0);
 
-    float moveSpeed;
-    if (m_input->IsKeyDown(Keys::LeftShift))
-    {
-        moveSpeed = cameraSpeed * acceleration;
-    }
-    else if (m_input->IsKeyDown(Keys::CapsLock))
-    {
-        moveSpeed = cameraSpeed * deceleration;
-    }
-    else
-    {
-        moveSpeed = cameraSpeed;
-    }
+    float moveSpeed = cameraSpeed;
+    if (m_input->IsKeyDown(Keys::LeftShift)) moveSpeed *= acceleration;
+    else if (m_input->IsKeyDown(Keys::CapsLock)) moveSpeed *= deceleration;
 
-    if (m_input->IsKeyDown(Keys::W)) {
-        XMVECTOR move = XMVectorScale(forward, moveSpeed);
-        cameraPos.x += XMVectorGetX(move);
-        cameraPos.z += XMVectorGetZ(move);
-    }
-    if (m_input->IsKeyDown(Keys::S)) {
-        XMVECTOR move = XMVectorScale(forward, -moveSpeed);
-        cameraPos.x += XMVectorGetX(move);
-        cameraPos.z += XMVectorGetZ(move);
-    }
-    if (m_input->IsKeyDown(Keys::A)) {
-        XMVECTOR move = XMVectorScale(right, -moveSpeed);
-        cameraPos.x += XMVectorGetX(move);
-        cameraPos.z += XMVectorGetZ(move);
-    }
-    if (m_input->IsKeyDown(Keys::D)) {
-        XMVECTOR move = XMVectorScale(right, moveSpeed);
-        cameraPos.x += XMVectorGetX(move);
-        cameraPos.z += XMVectorGetZ(move);
-    }
+    auto moveXZ = [&](float s, XMVECTOR dir) {
+        XMVECTOR mv = XMVectorScale(dir, s);
+        cameraPos.x += XMVectorGetX(mv);
+        cameraPos.z += XMVectorGetZ(mv);
+        };
+
+    if (m_input->IsKeyDown(Keys::W)) moveXZ(moveSpeed, forward);
+    if (m_input->IsKeyDown(Keys::S)) moveXZ(-moveSpeed, forward);
+    if (m_input->IsKeyDown(Keys::A)) moveXZ(-moveSpeed, right);
+    if (m_input->IsKeyDown(Keys::D)) moveXZ(moveSpeed, right);
 
     if (m_input->IsKeyDown(Keys::Q)) cameraPos.y -= moveSpeed;
     if (m_input->IsKeyDown(Keys::E)) cameraPos.y += moveSpeed;
@@ -124,25 +92,9 @@ void RenderingSystem::KeyboardControl()
 
 void RenderingSystem::CountFPS()
 {
-    static float fpsAccumulator = 0.0f;
-    static int frameCount = 0;
-    fpsAccumulator += timer.GetElapsedSeconds();
-    frameCount++;
-
-    if (fpsAccumulator >= 1.0f)
-    {
-        m_currentFPS = frameCount / fpsAccumulator;
-        frameCount = 0;
-        fpsAccumulator = 0.0f;
-    }
-}
-
-RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
-    : m_framework(framework)
-    , m_input(input)
-    , m_pipeline(framework)
-    , m_yaw(0), m_pitch(0)
-{
+    static float acc = 0.f; static int frames = 0;
+    acc += timer.GetElapsedSeconds(); frames++;
+    if (acc >= 1.0f) { m_currentFPS = frames / acc; acc = 0.f; frames = 0; }
 }
 
 void RenderingSystem::SetObjects()
@@ -150,29 +102,15 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-        "Assets\\Wall\\Wall.obj",
+            "Assets\\Test\\test.obj", 
         },
         { 0.0f, }
     );
 
-    float scale = 100.0f;
-    for (SceneObject& obj : m_objects) {
-        obj.scale = { scale, scale, scale };
-    }
-
-    // culling test
-    //for (int i = 0; i < 5; i++) {
-    //    SceneObject tmp = {
-    //        CreateSphere(20,20,1),
-    //        { 0 + i * 5.0f, 0, 0, },
-    //        { 0, 0, 0, },
-    //        { 1.0f, 1.0f, 1.0f, },
-    //    };
-    //    m_objects.push_back(tmp);
-    //}
+    for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
-        size_t L = obj.lodMeshes.size();
+        const size_t L = obj.lodMeshes.size();
         obj.lodVertexBuffers.resize(L);
         obj.lodVertexUploads.resize(L);
         obj.lodVBs.resize(L);
@@ -196,20 +134,19 @@ void RenderingSystem::SetObjects()
     }
 }
 
-void RenderingSystem::SetLights() 
+void RenderingSystem::SetLights()
 {
-    Light light {};
-    light.type = 0;
-    light.color = { 1.0f, 1.0f, 1.0f };
-    light.spotDirection = {0,0,1};
-    light.direction = {0.0f,-1.0f,0.0f};
-
-    lights.push_back(light);
+    Light l{};
+    l.type = 0;
+    l.color = { 1,1,1 };
+    l.spotDirection = { 0,0,1 };
+    l.direction = direction;
+    lights.push_back(l);
 }
 
 void RenderingSystem::LoadErrorTextures()
 {
-    ID3D12Device* device = m_framework->GetDevice();
+    auto* device = m_framework->GetDevice();
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
@@ -218,7 +155,7 @@ void RenderingSystem::LoadErrorTextures()
     errorTextures.height = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorHeight.jpg");
     errorTextures.metallic = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorMetallic.jpg");
     errorTextures.roughness = errorTextures.white;
-    errorTextures.abmientOcclusion = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\black.jpg");
+    errorTextures.ambientOcclusion = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\black.jpg");
     errorTextures.diffuse = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorDiffuse.jpg");
 
     auto finish = uploadBatch.End(m_framework->GetCommandQueue());
@@ -227,52 +164,101 @@ void RenderingSystem::LoadErrorTextures()
 
 void RenderingSystem::LoadTextures()
 {
-    ID3D12Device* device = m_framework->GetDevice();
+    auto* device = m_framework->GetDevice();
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\Wall";
+    std::filesystem::path sceneFolder = L"Assets\\Test";
 
-    auto makeFullPath = [&](const std::string& rel,
-        std::filesystem::path& out) -> bool {
-            if (rel.empty()) return false;
-            std::filesystem::path p1 = sceneFolder / rel;
-            if (std::filesystem::exists(p1)) { out = p1; return true; }
-            std::filesystem::path p2 = sceneFolder / std::filesystem::path(rel).filename();
-            if (std::filesystem::exists(p2)) { out = p2; return true; }
-            return false;
+    auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool {
+        if (rel.empty()) return false;
+        auto p1 = sceneFolder / rel;
+        if (std::filesystem::exists(p1)) { out = p1; return true; }
+        auto p2 = sceneFolder / std::filesystem::path(rel).filename();
+        if (std::filesystem::exists(p2)) { out = p2; return true; }
+        return false;
         };
 
-    auto safeLoad = [&](const std::string& rel, UINT fallback, UINT error)->UINT {
+    auto safeLoad = [&](const std::string& rel, UINT fallback, UINT onError)->UINT {
         std::filesystem::path full;
         if (makeFullPath(rel, full)) {
-            try {
-                return loader.LoadTexture(device, uploadBatch, m_framework,
-                    full.wstring().c_str());
-            }
-            catch (...) {
-                return error;
-            }
+            try { return loader.LoadTexture(device, uploadBatch, m_framework, full.wstring().c_str()); }
+            catch (...) { return onError; }
         }
         return fallback;
         };
 
-    for (auto& obj : m_objects)
-    {
+    for (auto& obj : m_objects) {
         obj.texIdx[0] = safeLoad(obj.material.diffuseTexPath, errorTextures.white, errorTextures.diffuse);
         obj.texIdx[1] = safeLoad(obj.material.normalTexPath, errorTextures.normal, errorTextures.normal);
         obj.texIdx[2] = safeLoad(obj.material.displacementTexPath, errorTextures.height, errorTextures.height);
         obj.texIdx[3] = safeLoad(obj.material.roughnessTexPath, errorTextures.white, errorTextures.roughness);
         obj.texIdx[4] = safeLoad(obj.material.metallicTexPath, errorTextures.metallic, errorTextures.metallic);
-        obj.texIdx[5] = safeLoad(obj.material.aoTexPath, errorTextures.abmientOcclusion, errorTextures.abmientOcclusion);
+        obj.texIdx[5] = safeLoad(obj.material.aoTexPath, errorTextures.ambientOcclusion, errorTextures.ambientOcclusion);
     }
 
     auto finish = uploadBatch.End(m_framework->GetCommandQueue());
     finish.wait();
 }
 
+void RenderingSystem::CreateConstantBuffers()
+{
+    auto* device = m_framework->GetDevice();
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+
+    {
+        const UINT cbSize = Align256(sizeof(CB));
+        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_constantBuffer)));
+        CD3DX12_RANGE rr(0, 0); m_constantBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pCbData));
+    }
+
+    {
+        const UINT cbSize = Align256(sizeof(LightCB));
+        const UINT totalSize = cbSize * static_cast<UINT>(lights.size());
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_lightBuffer)));
+        CD3DX12_RANGE rr(0, 0); m_lightBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pLightData));
+    }
+
+    {
+        const UINT totalSize = Align256(sizeof(AmbientCB));
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_ambientBuffer)));
+        CD3DX12_RANGE rr(0, 0); m_ambientBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pAmbientData));
+    }
+
+    {
+        const UINT cbSize = Align256(sizeof(MaterialCB));
+        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_materialBuffer)));
+        CD3DX12_RANGE rr(0, 0); m_materialBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pMaterialData));
+    }
+
+    {
+        const UINT totalSize = Align256(sizeof(TessCB));
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_tessBuffer)));
+        CD3DX12_RANGE rr(0, 0); m_tessBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pTessCbData));
+    }
+}
+
 void RenderingSystem::Initialize()
 {
+    cmd = m_framework->GetCommandList();
+
     m_pipeline.Init();
 
     m_gbuffer = std::make_unique<GBuffer>(
@@ -284,106 +270,26 @@ void RenderingSystem::Initialize()
     );
     m_gbuffer->Initialize();
 
-    auto* device = m_framework->GetDevice();
-    auto cmdList = m_framework->GetCommandList();
-    auto alloc = m_framework->GetCommandAllocator();
-    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+    auto* alloc = m_framework->GetCommandAllocator();
 
     alloc->Reset();
-    cmdList->Reset(alloc, nullptr);
+    cmd->Reset(alloc, nullptr);
 
     SetObjects();
     SetLights();
 
-    ThrowIfFailed(cmdList->Close());
-    ID3D12CommandList* lists[] = { cmdList };
+    ThrowIfFailed(cmd->Close());
+    ID3D12CommandList* lists[] = { cmd };
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
     m_framework->WaitForGpu();
 
     LoadErrorTextures();
     LoadTextures();
-
-    // CB
-    {
-        const UINT cbSize = (sizeof(CB) + 255) & ~255;
-        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
-        const auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
-
-        ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload, D3D12_HEAP_FLAG_NONE, &cbDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-            IID_PPV_ARGS(&m_constantBuffer)));
-    }
-
-    {
-        const UINT lightCBSize = (sizeof(LightCB) + 255) & ~255;
-        const UINT maxLights = lights.size();
-        const UINT totalSize = lightCBSize * maxLights;
-
-        CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
-
-        ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload,
-            D3D12_HEAP_FLAG_NONE,
-            &lightDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&m_lightBuffer)
-        ));
-    }
-
-    {
-        const UINT ambientCBSize = (sizeof(AmbientCB) + 255) & ~255;
-
-        CD3DX12_RESOURCE_DESC lightDesc = CD3DX12_RESOURCE_DESC::Buffer(ambientCBSize);
-
-        ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload,
-            D3D12_HEAP_FLAG_NONE,
-            &lightDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&m_ambientBuffer)
-        ));
-    }
-
-    {
-        const UINT MaterialCBSize = (sizeof(MaterialCB) + 255) & ~255;
-        const UINT totalSize = MaterialCBSize * m_objects.size();
-        CD3DX12_RESOURCE_DESC normalDesc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
-
-        ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload,
-            D3D12_HEAP_FLAG_NONE,
-            &normalDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&m_materialBuffer)
-        ));
-    }
-
-    {
-        const UINT tessCbSize = (sizeof(TessCB) + 255) & ~255;
-        CD3DX12_RESOURCE_DESC tessDesc = CD3DX12_RESOURCE_DESC::Buffer(tessCbSize);
-
-        ThrowIfFailed(device->CreateCommittedResource(
-            &heapUpload,
-            D3D12_HEAP_FLAG_NONE,
-            &tessDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&m_tessBuffer)
-        ));
-
-        CD3DX12_RANGE readRange(0, 0);
-        ThrowIfFailed(m_tessBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_pTessCbData)));
-    }
+    CreateConstantBuffers();
 }
 
-void RenderingSystem::Update(float dt)
+void RenderingSystem::Update(float)
 {
-    //m_objects.back().position = lights[0].position;
-
     if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
     if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
     if (m_input->IsKeyDown(Keys::F3)) lights[0].type = 2;
@@ -402,14 +308,6 @@ void RenderingSystem::Update(float dt)
     KeyboardControl();
 }
 
-float heightScale = 0.0f;
-float maxTess = 1.0f;
-int wire = 0;
-float scal = 100.0f;
-XMFLOAT3 rot = { 0.0f, 0.0f, 0.0f };
-float use = 1.0f;
-float fakeCamera = 0.0f;
-
 void RenderingSystem::Render()
 {
     timer.Tick();
@@ -422,6 +320,33 @@ void RenderingSystem::Render()
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
+    UpdateUI();
+
+    m_gbuffer->Bind(cmd);
+    const float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
+    m_gbuffer->Clear(cmd, clearG);
+    m_framework->SetViewportAndScissors();
+
+    BuildViewProj();
+
+    UpdateTessellationCB();
+    ExtractVisibleObjects();
+    UpdatePerObjectCBs();
+
+    GeometryPass();
+
+    m_gbuffer->TransitionToReadable(cmd);
+
+    DeferredPass();
+
+    ImGui::Render();
+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+    m_framework->EndFrame();
+}
+
+void RenderingSystem::UpdateUI()
+{
     {
         ImGui::Begin("Camera");
 
@@ -429,188 +354,205 @@ void RenderingSystem::Render()
         ImGui::InputFloat("Acceleration", &acceleration, 1.0f);
         ImGui::InputFloat("Deceleration", &deceleration, 0.05f);
         ImGui::InputFloat("Rotation speed", &rotationSpeed, 0.01f);
-        ImGui::SliderFloat("Fake cam", &fakeCamera, 0.0f, 2000.0f);
-
+        ImGui::SliderFloat("Fake cam Z", &m_fakeCameraZ, 0.0f, 2000.0f);
+        
         ImGui::End();
     }
+    
 
     {
         ImGui::Begin("Object");
 
-        ImGui::InputFloat("Rot x degree", &rot.x, 1.0f);
-        ImGui::InputFloat("Rot y degree", &rot.y, 1.0f);
-        ImGui::InputFloat("Rot z degree", &rot.z, 1.0f);
+        ImGui::InputFloat("Rot x deg", &m_objectRotationDeg.x, 1.0f);
+        ImGui::InputFloat("Rot y deg", &m_objectRotationDeg.y, 1.0f);
+        ImGui::InputFloat("Rot z deg", &m_objectRotationDeg.z, 1.0f);
 
-        m_objects[0].rotation = XMFLOAT3
-        {
-            XMConvertToRadians(rot.x),
-            XMConvertToRadians(rot.y),
-            XMConvertToRadians(rot.z),
-        };
+        if (!m_objects.empty()) {
+            m_objects[0].rotation = XMFLOAT3(
+                XMConvertToRadians(m_objectRotationDeg.x),
+                XMConvertToRadians(m_objectRotationDeg.y),
+                XMConvertToRadians(m_objectRotationDeg.z)
+            );
 
-        ImGui::InputFloat("Scale", &scal, 5.0f);
-        m_objects[0].scale = { scal, scal, scal };
+            ImGui::InputFloat("Scale", &m_objectScale, 5.0f);
+            m_objects[0].scale = { m_objectScale, m_objectScale, m_objectScale };
 
-        ImGui::InputFloat("Pos x", &m_objects[0].position.x, 1.0f);
-        ImGui::InputFloat("Pos y", &m_objects[0].position.y, 1.0f);
-        ImGui::InputFloat("Pos z", &m_objects[0].position.z, 1.0f);
+            ImGui::InputFloat("Pos x", &m_objects[0].position.x, 1.0f);
+            ImGui::InputFloat("Pos y", &m_objects[0].position.y, 1.0f);
+            ImGui::InputFloat("Pos z", &m_objects[0].position.z, 1.0f);
+        }
 
-        ImGui::InputFloat("Normal", &use, 1.0f);
+        ImGui::InputFloat("Use normal map (0/1)", &m_useNormalMap, 1.0f);
 
         ImGui::End();
     }
 
-    m_gbuffer->Bind(cmd);
-    float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
-    m_gbuffer->Clear(cmd, clearG);
-
-    m_framework->SetViewportAndScissors();
-
-    cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
-    cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
-
     {
-        ID3D12DescriptorHeap* heaps[] = {
-            m_framework->GetSrvHeap(),
-            m_framework->GetSamplerHeap()
-        };
-        cmd->SetDescriptorHeaps(_countof(heaps), heaps);
+        ImGui::Begin("Tessellation");
+
+        ImGui::InputFloat("Height scale", &m_heightScale, 1.0f);
+        ImGui::InputFloat("Max tess", &m_maxTess, 1.0f);
+        ImGui::Checkbox("Wireframe", &m_wireframe);
+        ImGui::Text("FPS: %.2f", m_currentFPS);
+
+        ImGui::End();
     }
 
-    CB cb{};
-    const XMVECTOR eye = XMVectorSet(cameraPos.x, cameraPos.y, cameraPos.z, 0);
-    XMVECTOR forwardDir = XMVectorSet(
+    {
+        ImGui::Begin("Light");
+
+        ImGui::InputFloat("Light x", &direction.x, 1.0f);
+        ImGui::InputFloat("Light y", &direction.y, 1.0f);
+        ImGui::InputFloat("Light z", &direction.z, 1.0f);
+        lights[0].direction = direction;
+
+        ImGui::End();
+    }
+}
+
+void RenderingSystem::BuildViewProj()
+{
+    const XMVECTOR eye = XMLoadFloat3(&cameraPos);
+    const XMVECTOR forwardDir = XMVectorSet(
         cosf(m_pitch) * sinf(m_yaw),
         sinf(m_pitch),
         cosf(m_pitch) * cosf(m_yaw),
         0.0f
     );
-    XMVECTOR at = XMVectorAdd(eye, forwardDir);
-    XMVECTOR up = XMVectorSet(0, 1, 0, 0);
-    XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
-    float aspect = static_cast<float>(m_framework->GetWidth()) / m_framework->GetHeight();
-    XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500000.f);
-    XMMATRIX viewProj = view * proj;
+    const XMVECTOR at = XMVectorAdd(eye, forwardDir);
+    const XMVECTOR up = XMVectorSet(0, 1, 0, 0);
 
-    TessCB tc;
+    view = XMMatrixLookAtLH(eye, at, up);
 
-    const UINT tcSize = (sizeof(tc) + 255) & ~255;
-    m_pTessCbData = nullptr;
-    {
-        CD3DX12_RANGE readRange(0, 0);
-        ThrowIfFailed(
-            m_tessBuffer->Map(0, &readRange, reinterpret_cast<void**>(&m_pTessCbData))
-        );
-    }
+    const float aspect = static_cast<float>(m_framework->GetWidth()) / m_framework->GetHeight();
+    proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500000.f);
+    viewProj = view * proj;
+}
 
-    {
-        ImGui::Begin("Tessallation");
+void RenderingSystem::UpdateTessellationCB()
+{
+    TessCB t{};
+    t.cameraPos = cameraPos;
+    t.heightScale = m_heightScale;
+    t.minDist = 5000.0f;
+    t.maxDist = 10000.0f;
+    t.minTess = 1.0f;
+    t.maxTess = m_maxTess;
 
-        ImGui::InputFloat("Height scale", &heightScale, 1.0f);
-        ImGui::InputFloat("Max tess", &maxTess, 1.0f);
-        ImGui::InputInt("Wireframe", &wire);
-        ImGui::Text("FPS: %f", m_currentFPS);
+    memcpy(m_pTessCbData, &t, sizeof(t));
+}
 
-        ImGui::End();
-    }
-
-    tc.cameraPos = cameraPos;
-    tc.heightScale = heightScale;
-    tc.minDist = 5000.0f;
-    tc.maxDist = 10000.0f;
-    tc.maxTess = maxTess;
-    tc.minTess = 1.0f;
-
-    memcpy(m_pTessCbData, &tc, sizeof(tc));
-
-    m_tessBuffer->Unmap(0, nullptr);
-
-
-    XMFLOAT4 frustumPlanes[6];
-    ExtractFrustumPlanes(frustumPlanes, viewProj);
-
-    const UINT cbSize = (sizeof(cb) + 255) & ~255;
-    BYTE* pMappedData = nullptr;
-    {
-        CD3DX12_RANGE readRange(0, 0);
-        ThrowIfFailed(
-            m_constantBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMappedData))
-        );
-    }
+void RenderingSystem::ExtractVisibleObjects()
+{
+    XMFLOAT4 planes[6];
+    ExtractFrustumPlanes(planes, viewProj);
 
     m_visibleObjects.clear();
-    for (UINT i = 0; i < m_objects.size(); ++i)
-    {
-        const XMMATRIX world = m_objects[i].GetWorldMatrix();
-        const XMVECTOR localCenter = XMLoadFloat3(&m_objects[i].bsCenter);
-        const float   localRadius = m_objects[i].bsRadius;
+    m_visibleObjects.reserve(m_objects.size());
+
+    for (auto& o : m_objects) {
+        const XMMATRIX world = o.GetWorldMatrix();
+        const XMVECTOR localCenter = XMLoadFloat3(&o.bsCenter);
+        const float    localRadius = o.bsRadius;
+
         const XMVECTOR worldCenter = XMVector3Transform(localCenter, world);
-        const auto& scale = m_objects[i].scale;
-        const float   scaleLen = sqrtf(scale.x * scale.x + scale.y * scale.y + scale.z * scale.z);
-        const float   worldRadius = localRadius * scaleLen;
+        const auto& s = o.scale;
+        const float    scaleLen = std::sqrt(s.x * s.x + s.y * s.y + s.z * s.z);
+        const float    worldRadius = localRadius * scaleLen;
 
         bool visible = true;
-        for (int p = 0; p < 6; ++p)
-        {
-            const XMVECTOR plane = XMLoadFloat4(&frustumPlanes[p]);
-            float dist = XMVectorGetX(XMPlaneDotCoord(plane, worldCenter));
+        for (int p = 0; p < 6; ++p) {
+            const XMVECTOR plane = XMLoadFloat4(&planes[p]);
+            const float dist = XMVectorGetX(XMPlaneDotCoord(plane, worldCenter));
             if (dist < -worldRadius + 0.05f * worldRadius) { visible = false; break; }
         }
-        if (visible) m_visibleObjects.push_back(&m_objects[i]);
+        if (visible) m_visibleObjects.push_back(&o);
     }
+}
 
-    MaterialCB materialCB{};
-    const UINT materialCbSize = (sizeof(materialCB) + 255) & ~255;
-    BYTE* pMaterialMappedData = nullptr;
-    {
-        CD3DX12_RANGE readRange(0, 0);
-        ThrowIfFailed(
-            m_materialBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pMaterialMappedData))
-        );
-    }
+void RenderingSystem::UpdatePerObjectCBs()
+{
+    const UINT cbSize = Align256(sizeof(CB));
+    const UINT materialSize = Align256(sizeof(MaterialCB));
 
-    for (UINT i = 0; i < m_visibleObjects.size(); ++i)
-    {
-        SceneObject* obj = m_visibleObjects[i];
-        XMMATRIX world = obj->GetWorldMatrix();
-        XMMATRIX wvp = world * viewProj;
+    CB cb{};
+    MaterialCB mcb{};
 
+    for (size_t i = 0; i < m_visibleObjects.size(); ++i) {
+        const SceneObject* obj = m_visibleObjects[i];
+
+        const XMMATRIX world = obj->GetWorldMatrix();
         XMStoreFloat4x4(&cb.World, world);
         XMStoreFloat4x4(&cb.ViewProj, viewProj);
 
-        materialCB.useNormalMap = use;
-        materialCB.diffuseIdx = obj->texIdx[0];
-        materialCB.normalIdx = obj->texIdx[1];
-        materialCB.dispIdx = obj->texIdx[2];
-        materialCB.roughIdx = obj->texIdx[3];
-        materialCB.metalIdx = obj->texIdx[4];
-        materialCB.aoIdx = obj->texIdx[5];
+        mcb.useNormalMap = m_useNormalMap;
+        mcb.diffuseIdx = obj->texIdx[0];
+        mcb.normalIdx = obj->texIdx[1];
+        mcb.dispIdx = obj->texIdx[2];
+        mcb.roughIdx = obj->texIdx[3];
+        mcb.metalIdx = obj->texIdx[4];
+        mcb.aoIdx = obj->texIdx[5];
 
-        memcpy(pMappedData + i * cbSize, &cb, sizeof(cb));
-        memcpy(pMaterialMappedData + i * materialCbSize, &materialCB, sizeof(materialCB));
+        memcpy(m_pCbData + static_cast<UINT>(i) * cbSize, &cb, sizeof(cb));
+        memcpy(m_pMaterialData + static_cast<UINT>(i) * materialSize, &mcb, sizeof(mcb));
     }
-    m_constantBuffer->Unmap(0, nullptr);
-    m_materialBuffer->Unmap(0, nullptr);
+}
 
-    {
-        ID3D12DescriptorHeap* heaps2[] = {
-            m_framework->GetSrvHeap(),
-            m_framework->GetSamplerHeap()
-        };
-        cmd->SetDescriptorHeaps(_countof(heaps2), heaps2);
+void RenderingSystem::UpdateLightCB()
+{
+    const UINT lightCBSize = Align256(sizeof(LightCB));
+    XMMATRIX invVP = XMMatrixInverse(nullptr, viewProj);
+
+    for (size_t i = 0; i < lights.size(); ++i) {
+        Light& L = lights[i];
+        LightCB cb{};
+
+        XMStoreFloat4x4(&cb.InvViewProj, XMMatrixTranspose(invVP));
+        cb.Type = L.type;
+        cb.LightDir = { L.direction.x,     L.direction.y,     L.direction.z,     0 };
+        cb.LightColor = { L.color.x,         L.color.y,         L.color.z,         0 };
+        cb.LightPosRange = { L.position.x,      L.position.y,      L.position.z,      L.radius };
+        cb.SpotDirInnerCos = { L.spotDirection.x, L.spotDirection.y, L.spotDirection.z, L.innerCone() };
+        cb.SpotOuterPad = { L.outerCone(), 0, 0, 0 };
+        cb.ScreenSize = { static_cast<float>(m_framework->GetWidth()), static_cast<float>(m_framework->GetHeight()), 0, 0 };
+
+        memcpy(m_pLightData + static_cast<UINT>(i) * lightCBSize, &cb, sizeof(cb));
     }
 
-    XMFLOAT3 fakeCamPos = { 0, 0, fakeCamera };
+    AmbientCB amb{};
+    amb.AmbientColor = { 0.2f, 0.2f, 0.2f, 0.0f };
+    memcpy(m_pAmbientData, &amb, sizeof(amb));
+}
+
+void RenderingSystem::SetCommonHeaps()
+{
+    ID3D12DescriptorHeap* heaps[] = {
+        m_framework->GetSrvHeap(),
+        m_framework->GetSamplerHeap()
+    };
+    cmd->SetDescriptorHeaps(_countof(heaps), heaps);
+}
+
+void RenderingSystem::GeometryPass()
+{
+    SetCommonHeaps();
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
 
     bool switchedToTransparent = false;
-    for (UINT i = 0; i < m_visibleObjects.size(); ++i)
-    {
+
+    const UINT cbSize = Align256(sizeof(CB));
+    const UINT materialSize = Align256(sizeof(MaterialCB));
+
+    const XMFLOAT3 fakeCamPos = { 0, 0, m_fakeCameraZ };
+
+    for (size_t i = 0; i < m_visibleObjects.size(); ++i) {
         SceneObject* obj = m_visibleObjects[i];
 
-        //float dist = XMVectorGetX(XMVector3Length(XMLoadFloat3(&cameraPos) - XMLoadFloat3(&obj->position)));
-        float dist = XMVectorGetX(XMVector3Length(XMLoadFloat3(&fakeCamPos) - XMLoadFloat3(&obj->position)));
-        int lod = int(obj->lodDistances.size()) - 1;
-        for (int j = 0; j + 1 < obj->lodDistances.size(); ++j) {
+        const float dist = XMVectorGetX(XMVector3Length(
+            XMLoadFloat3(&fakeCamPos) - XMLoadFloat3(&obj->position)));
+        int lod = static_cast<int>(obj->lodDistances.size()) - 1;
+        for (int j = 0; j + 1 < static_cast<int>(obj->lodDistances.size()); ++j) {
             if (dist < obj->lodDistances[j + 1]) { lod = j; break; }
         }
 
@@ -619,139 +561,64 @@ void RenderingSystem::Render()
             switchedToTransparent = true;
         }
 
-        bool useTess = (obj->texIdx[2] != errorTextures.height);
-        if (useTess)
-        {
-            if (wire)
-            {
-                cmd->SetPipelineState(m_pipeline.GetGBufferTessellationWireframePSO());
-            }
-            else
-            {   
-                cmd->SetPipelineState(m_pipeline.GetGBufferTessellationPSO());
-            }
+        const bool useTess = (obj->texIdx[2] != errorTextures.height);
+        if (useTess) {
+            cmd->SetPipelineState(m_wireframe ? m_pipeline.GetGBufferTessellationWireframePSO()
+                : m_pipeline.GetGBufferTessellationPSO());
             cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
         }
-        else
-        {
+        else {
             cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
             cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         }
 
-        cmd->SetGraphicsRootConstantBufferView(
-            0,
-            m_constantBuffer->GetGPUVirtualAddress() + i * cbSize
-        );
+        cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * cbSize);
+        cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
+        cmd->SetGraphicsRootConstantBufferView(2, m_tessBuffer->GetGPUVirtualAddress());
 
-        cmd->SetGraphicsRootConstantBufferView(
-            1,
-            m_lightBuffer->GetGPUVirtualAddress()
-        );
+        auto srvStart = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+        cmd->SetGraphicsRootDescriptorTable(3, srvStart);
 
-        cmd->SetGraphicsRootConstantBufferView(
-            2,
-            m_tessBuffer->GetGPUVirtualAddress()
-        );
+        auto sampStart = m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart();
+        cmd->SetGraphicsRootDescriptorTable(4, sampStart);
 
-        CD3DX12_GPU_DESCRIPTOR_HANDLE tableStart(
-            m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart()
-        );
-        cmd->SetGraphicsRootDescriptorTable(3, tableStart);
-
-        CD3DX12_GPU_DESCRIPTOR_HANDLE sampH(
-            m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart()
-        );
-        cmd->SetGraphicsRootDescriptorTable(4, sampH);
-
-        cmd->SetGraphicsRootConstantBufferView(
-            5,
-            m_materialBuffer->GetGPUVirtualAddress() + i * materialCbSize
-        );
+        cmd->SetGraphicsRootConstantBufferView(5, m_materialBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * materialSize);
 
         cmd->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
         cmd->IASetIndexBuffer(&obj->lodIBs[lod]);
-        cmd->DrawIndexedInstanced(
-            (UINT)obj->lodMeshes[lod].indices.size(),
-            1, 0, 0, 0
-        );
+        cmd->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
     }
+}
 
-    m_gbuffer->TransitionToReadable(cmd);
-
+void RenderingSystem::DeferredPass()
+{
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();
     cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-    float clearBB[4] = { 0,0,0,1 };
+    const float clearBB[4] = { 0,0,0,1 };
     cmd->ClearRenderTargetView(rtv, clearBB, 0, nullptr);
     m_framework->SetViewportAndScissors();
 
-    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());  
+    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
+    SetCommonHeaps();
 
-    AmbientCB ambientCB = {};
-    ambientCB.AmbientColor = { 0.2f, 0.2f, 0.2f, 0.0f };
-    UINT8* pAmbientData = nullptr;
-    CD3DX12_RANGE writeRange(0, 0);
-    m_ambientBuffer->Map(0, &writeRange, reinterpret_cast<void**>(&pAmbientData));
-    memcpy(pAmbientData, &ambientCB, sizeof(ambientCB));
-    m_ambientBuffer->Unmap(0, nullptr);
-
-    ID3D12DescriptorHeap* defHeaps[] = {
-    m_framework->GetSrvHeap(),
-    m_framework->GetSamplerHeap()
-    };
-    cmd->SetDescriptorHeaps(_countof(defHeaps), defHeaps);
-
-    auto srvHandles = m_gbuffer->GetSRVs();
-    cmd->SetGraphicsRootDescriptorTable(0, srvHandles[0]);
+    auto srvs = m_gbuffer->GetSRVs();
+    cmd->SetGraphicsRootDescriptorTable(0, srvs[0]);
     cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
 
     cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
     cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
-
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(6, 1, 0, 0);
 
     cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
 
-    const UINT lightCBSize = (sizeof(LightCB) + 255) & ~255;
-    BYTE* pLightData = nullptr;
-    {
-        CD3DX12_RANGE readRange(0, 0);
-        ThrowIfFailed(m_lightBuffer->Map(0, &readRange, reinterpret_cast<void**>(&pLightData)));
-    }
+    UpdateLightCB();
 
-    XMMATRIX projForDeferred = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 5000.f);
-    XMMATRIX viewProjForDeferred = view * proj;
-
-    for (UINT i = 0; i < lights.size(); ++i)
-    {
-        Light& light = lights[i];
-
-        LightCB lightCB{};
-
-        XMMATRIX invVP = XMMatrixInverse(nullptr, viewProjForDeferred);
-        XMStoreFloat4x4(&lightCB.InvViewProj, XMMatrixTranspose(invVP));
-        lightCB.Type = light.type;
-        lightCB.LightDir = { light.direction.x, light.direction.y, light.direction.z, 0 };
-        lightCB.LightColor = { light.color.x,     light.color.y,     light.color.z,     0 };
-        lightCB.LightPosRange = { light.position.x, light.position.y, light.position.z, light.radius };
-        lightCB.SpotDirInnerCos = { light.spotDirection.x, light.spotDirection.y, light.spotDirection.z, light.innerCone() };
-        lightCB.SpotOuterPad = { light.outerCone(), 0, 0, 0 };
-        lightCB.ScreenSize = { m_framework->GetWidth(), m_framework->GetHeight(), 0, 0 };
-
-        memcpy(pLightData + i * lightCBSize, &lightCB, sizeof(LightCB));
-    }
-    m_lightBuffer->Unmap(0, nullptr);
-
-    for (UINT i = 0; i < lights.size(); ++i)
-    {
-        D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + i * lightCBSize;
+    const UINT lightCBSize = Align256(sizeof(LightCB));
+    for (size_t i = 0; i < lights.size(); ++i) {
+        D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * lightCBSize;
         cmd->SetGraphicsRootConstantBufferView(1, cbAddr);
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmd->DrawInstanced(6, 1, 0, 0);
     }
-
-    ImGui::Render();
-    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
-
-    m_framework->EndFrame();
 }

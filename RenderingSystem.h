@@ -28,35 +28,71 @@ public:
 private:
     DX12Framework* m_framework;
     InputDevice* m_input;
-    Pipeline m_pipeline;
-    AssetLoader loader;
+    Pipeline       m_pipeline;
+    AssetLoader    loader;
     std::unique_ptr<GBuffer> m_gbuffer;
-    Timer timer;
+    Timer          timer;
 
-    std::vector<SceneObject> m_objects;
+    std::vector<SceneObject>  m_objects;
     std::vector<SceneObject*> m_visibleObjects;
-    std::vector<Light> lights;
+    std::vector<Light>        lights;
 
     ComPtr<ID3D12Resource> m_constantBuffer;
     ComPtr<ID3D12Resource> m_lightBuffer;
     ComPtr<ID3D12Resource> m_ambientBuffer;
     ComPtr<ID3D12Resource> m_tessBuffer;
     ComPtr<ID3D12Resource> m_materialBuffer;
+
+    uint8_t* m_pCbData = nullptr;
+    uint8_t* m_pLightData = nullptr;
+    uint8_t* m_pAmbientData = nullptr;
     uint8_t* m_pTessCbData = nullptr;
+    uint8_t* m_pMaterialData = nullptr;
 
-    float m_yaw, m_pitch;
-    float m_currentFPS = 0.0f;
+    float m_yaw = 0.f;
+    float m_pitch = 0.f;
+    XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
 
-    XMFLOAT3 cameraPos = { 0.0f, 0.0f, 0.0f };
     float cameraSpeed = 3.0f;
     float acceleration = 3.0f;
     float deceleration = 0.1f;
     float rotationSpeed = 0.02f;
 
+    float m_heightScale = 0.0f;
+    float m_maxTess = 1.0f;
+    bool  m_wireframe = false;
+    float m_objectScale = 40.0f;
+    XMFLOAT3 m_objectRotationDeg{ 0,0,0 };
+    float m_useNormalMap = 0.0f;
+    float m_fakeCameraZ = 0.0f;
+
+    float m_currentFPS = 0.0f;
+
+    XMFLOAT3 direction = {-1.0f, -2.0f, -1.0f};
+
+    XMMATRIX view, proj, viewProj;
+    ID3D12GraphicsCommandList* cmd;
+
+private:
+    static UINT Align256(UINT size) { return (size + 255) & ~255u; }
+    static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
+
     void KeyboardControl();
+    void CountFPS();
+
     void SetObjects();
     void SetLights();
-    void LoadTextures();
-    void CountFPS();
     void LoadErrorTextures();
+    void LoadTextures();
+    void CreateConstantBuffers();
+
+    void UpdateUI();
+    void BuildViewProj();
+    void UpdateTessellationCB();
+    void ExtractVisibleObjects();
+    void UpdatePerObjectCBs();
+    void UpdateLightCB();
+    void GeometryPass();
+    void DeferredPass();
+    void SetCommonHeaps();
 };
