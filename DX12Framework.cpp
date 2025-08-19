@@ -3,6 +3,7 @@
 #include "d3dx12.h"
 #include <stdexcept>
 #include "WICTextureLoader.h"
+#include <dxgi1_6.h>
 using Microsoft::WRL::ComPtr;
 
 inline void ThrowIfFailed(HRESULT hr)
@@ -41,24 +42,94 @@ void DX12Framework::Init()
 void DX12Framework::CreateDevice()
 {
     ComPtr<ID3D12Debug> debugController;
-    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) 
+    {
         debugController->EnableDebugLayer();
     }
 
-    ComPtr<IDXGIFactory4> factory;
-    ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
+    ComPtr<IDXGIFactory6> factory6;
+    HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory6));
+    if (FAILED(hr)) 
+    {
+        ComPtr<IDXGIFactory4> factory4;
+        ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory4)));
+        factory4.As(&factory6);
+    }
+
+    ComPtr<IDXGIAdapter1> bestAdapter;
+    DXGI_ADAPTER_DESC1 bestDesc = {};
+    auto tryPickWithPreference = [&]() -> bool {
+        if (!factory6) return false;
+        for (UINT i = 0;; ++i)
+        {
+            ComPtr<IDXGIAdapter1> adapter;
+            if (factory6->EnumAdapterByGpuPreference(
+                i,
+                DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                IID_PPV_ARGS(&adapter)) == DXGI_ERROR_NOT_FOUND) break;
+
+            DXGI_ADAPTER_DESC1 desc{};
+            adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+
+            if (SUCCEEDED(D3D12CreateDevice(adapter.Get(),
+                D3D_FEATURE_LEVEL_11_0,
+                _uuidof(ID3D12Device), nullptr)))
+            {
+                bestAdapter = adapter;
+                bestDesc = desc;
+                return true;
+            }
+        }
+        return false;
+        };
+
+    auto pickByEnumerateAll = [&]() {
+        ComPtr<IDXGIFactory1> factory1;
+        ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory1)));
+        for (UINT i = 0;; ++i) {
+            ComPtr<IDXGIAdapter1> adapter;
+            if (factory1->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+
+            DXGI_ADAPTER_DESC1 desc{};
+            adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+
+            if (SUCCEEDED(D3D12CreateDevice(adapter.Get(),
+                D3D_FEATURE_LEVEL_11_0,
+                _uuidof(ID3D12Device), nullptr)))
+            {
+                if (!bestAdapter || desc.DedicatedVideoMemory > bestDesc.DedicatedVideoMemory) {
+                    bestAdapter = adapter;
+                    bestDesc = desc;
+                }
+            }
+        }
+        };
+
+    bool picked = tryPickWithPreference();
+    if (!picked) pickByEnumerateAll();
+
+    if (!bestAdapter) 
+    {
+        ComPtr<IDXGIFactory4> factory4;
+        ThrowIfFailed(CreateDXGIFactory1(IID_PPV_ARGS(&factory4)));
+        ThrowIfFailed(factory4->EnumWarpAdapter(IID_PPV_ARGS(&bestAdapter)));
+        bestAdapter->GetDesc1(&bestDesc);
+    }
 
     ThrowIfFailed(D3D12CreateDevice(
-        nullptr,
+        bestAdapter.Get(),
         D3D_FEATURE_LEVEL_11_0,
         IID_PPV_ARGS(&m_device)));
 
     ComPtr<ID3D12InfoQueue> infoQueue;
-    if (SUCCEEDED(m_device.As(&infoQueue))) {
+    if (SUCCEEDED(m_device.As(&infoQueue))) 
+    {
         infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
         infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
         D3D12_MESSAGE_ID denyIds[] = { D3D12_MESSAGE_ID_MAP_INVALID_NULLRANGE };
-        D3D12_INFO_QUEUE_FILTER filter = {};
+        D3D12_INFO_QUEUE_FILTER filter{};
         filter.DenyList.NumIDs = _countof(denyIds);
         filter.DenyList.pIDList = denyIds;
         infoQueue->AddStorageFilterEntries(&filter);
@@ -132,7 +203,7 @@ void DX12Framework::CreateDescriptorHeaps()
 
     // DSV куча
     D3D12_DESCRIPTOR_HEAP_DESC dsvDesc = {};
-    dsvDesc.NumDescriptors = 1;
+    dsvDesc.NumDescriptors = 2;
     dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     ThrowIfFailed(m_device->CreateDescriptorHeap(
         &dsvDesc, IID_PPV_ARGS(&m_dsvHeap)));
@@ -146,30 +217,27 @@ void DX12Framework::CreateDescriptorHeaps()
     ThrowIfFailed(m_device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&m_srvHeap)));
     m_srvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-    D3D12_DESCRIPTOR_HEAP_DESC sampDesc = {};
-    sampDesc.NumDescriptors = 1;
-    sampDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
-    sampDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    ThrowIfFailed(m_device->CreateDescriptorHeap(&sampDesc, IID_PPV_ARGS(&m_samplerHeap)));
+    D3D12_DESCRIPTOR_HEAP_DESC samplerDesc = {};
+    samplerDesc.NumDescriptors = 2;
+    samplerDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+    samplerDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    ThrowIfFailed(m_device->CreateDescriptorHeap(&samplerDesc, IID_PPV_ARGS(&m_samplerHeap)));
     m_samplerDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 
-    D3D12_SAMPLER_DESC samplerDesc = {};
-    samplerDesc.Filter = D3D12_FILTER_ANISOTROPIC;
-    D3D12_TEXTURE_ADDRESS_MODE addressMode = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    samplerDesc.AddressU = addressMode;
-    samplerDesc.AddressV = addressMode;
-    samplerDesc.AddressW = addressMode;
-    samplerDesc.MipLODBias = 0.0f;
-    samplerDesc.MaxAnisotropy = 16;
-    samplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-    samplerDesc.MinLOD = 0;
-    samplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+    D3D12_SAMPLER_DESC linearSamp = {};
+    linearSamp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    linearSamp.AddressU = linearSamp.AddressV = linearSamp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearSamp.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    linearSamp.MaxLOD = D3D12_FLOAT32_MAX;
+    m_device->CreateSampler(&linearSamp, m_samplerHeap->GetCPUDescriptorHandleForHeapStart());
 
-    CD3DX12_CPU_DESCRIPTOR_HANDLE sampHandleCPU(
-        m_samplerHeap->GetCPUDescriptorHandleForHeapStart()
-    );
-
-    m_device->CreateSampler(&samplerDesc, sampHandleCPU);
+    D3D12_SAMPLER_DESC comparisonSamp = {};
+    comparisonSamp.Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    comparisonSamp.AddressU = comparisonSamp.AddressV = comparisonSamp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+    comparisonSamp.BorderColor[0] = comparisonSamp.BorderColor[1] = comparisonSamp.BorderColor[2] = comparisonSamp.BorderColor[3] = 0.0f;
+    comparisonSamp.ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    comparisonSamp.MaxLOD = 0.0f;
+    m_device->CreateSampler(&comparisonSamp, CD3DX12_CPU_DESCRIPTOR_HANDLE(m_samplerHeap->GetCPUDescriptorHandleForHeapStart(), 1, m_samplerDescriptorSize));
 }
 
 void DX12Framework::CreateRenderTargetViews()

@@ -25,14 +25,15 @@ void Pipeline::Init()
     compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
-    ComPtr<IDxcBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob;
-    Compile(L"Deferred.hlsl", L"VSMain", L"vs_6_0", vsBlob);
-    Compile(L"Deferred.hlsl", L"PSMain", L"ps_6_0", psBlob);
-    Compile(L"Deferred.hlsl", L"VS_GBuffer", L"vs_6_0", vsG);
-    Compile(L"Deferred.hlsl", L"PS_GBuffer", L"ps_6_0", psG);
-    Compile(L"Deferred.hlsl", L"VS_Quad", L"vs_6_0", vsQuad);
-    Compile(L"Deferred.hlsl", L"PS_Lighting", L"ps_6_0", psLight);
-    Compile(L"Deferred.hlsl", L"PS_Ambient", L"ps_6_0", psAmbientBlob);
+    ComPtr<IDxcBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob, vsShadow;
+    Compile(L"Shaders.hlsl", L"VSMain", L"vs_6_0", vsBlob);
+    Compile(L"Shaders.hlsl", L"PSMain", L"ps_6_0", psBlob);
+    Compile(L"Shaders.hlsl", L"VS_GBuffer", L"vs_6_0", vsG);
+    Compile(L"Shaders.hlsl", L"PS_GBuffer", L"ps_6_0", psG);
+    Compile(L"Shaders.hlsl", L"VS_Quad", L"vs_6_0", vsQuad);
+    Compile(L"Shaders.hlsl", L"PS_Lighting", L"ps_6_0", psLight);
+    Compile(L"Shaders.hlsl", L"PS_Ambient", L"ps_6_0", psAmbientBlob);
+    Compile(L"Shaders.hlsl", L"VS_Shadow", L"vs_6_0", vsShadow);
 
     ComPtr<IDxcBlob> vsTessBlob, hsTessBlob, dsTessBlob;
     Compile(L"Tessellation.hlsl", L"VSMain", L"vs_6_0", vsTessBlob);
@@ -89,7 +90,7 @@ void Pipeline::Init()
     opaqueDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
     opaqueDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
     opaqueDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    opaqueDesc.RasterizerState.FrontCounterClockwise = TRUE;
+    opaqueDesc.RasterizerState.FrontCounterClockwise = FALSE;
     opaqueDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
     opaqueDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     opaqueDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
@@ -151,17 +152,24 @@ void Pipeline::Init()
         &gbTessWireDesc, IID_PPV_ARGS(&m_gBufferTessellationWireframePSO)
     ));
 
-    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
-    CD3DX12_ROOT_PARAMETER deferredParams[4];
-    deferredParams[0].InitAsDescriptorTable(1, &srvRange);
-    deferredParams[1].InitAsConstantBufferView(1);
-    deferredParams[2].InitAsConstantBufferView(2);
-    deferredParams[3].InitAsDescriptorTable(1, &samplerRange);
+    CD3DX12_DESCRIPTOR_RANGE defSrvRanges[2];
+    defSrvRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
+    defSrvRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
+
+    CD3DX12_DESCRIPTOR_RANGE defSampRange;
+    defSampRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 2, 0);
+
+    CD3DX12_ROOT_PARAMETER defParams[5];
+    defParams[0].InitAsDescriptorTable(1, &defSrvRanges[0], D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[2].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[3].InitAsDescriptorTable(1, &defSampRange, D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[4].InitAsDescriptorTable(1, &defSrvRanges[1], D3D12_SHADER_VISIBILITY_PIXEL);
 
     CD3DX12_ROOT_SIGNATURE_DESC deferredRSDesc;
     deferredRSDesc.Init(
-        _countof(deferredParams),
-        deferredParams,
+        _countof(defParams),
+        defParams,
         0, nullptr,
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
     );
@@ -180,7 +188,7 @@ void Pipeline::Init()
     defDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
     defDesc.PS = { psLight->GetBufferPointer(), psLight->GetBufferSize() };
     defDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    opaqueDesc.RasterizerState.FrontCounterClockwise = TRUE;
+    opaqueDesc.RasterizerState.FrontCounterClockwise = FALSE;
     opaqueDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
 
     D3D12_BLEND_DESC blendDesc = {};
@@ -238,6 +246,25 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &ambientDesc, IID_PPV_ARGS(&m_ambientPSO)
     ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowDesc{};
+    shadowDesc.InputLayout = { inputLayout, _countof(inputLayout) };
+    shadowDesc.pRootSignature = m_rootSignature.Get();
+    shadowDesc.VS = { vsShadow->GetBufferPointer(), vsShadow->GetBufferSize() };
+    shadowDesc.PS = { nullptr, 0 };
+    shadowDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    shadowDesc.RasterizerState.DepthBias = 64;
+    shadowDesc.RasterizerState.SlopeScaledDepthBias = 1.5f;
+    shadowDesc.RasterizerState.DepthBiasClamp = 0.0f;
+    shadowDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    shadowDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    shadowDesc.SampleMask = UINT_MAX;
+    shadowDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    shadowDesc.NumRenderTargets = 0;
+    for (int i = 0; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) shadowDesc.RTVFormats[i] = DXGI_FORMAT_UNKNOWN;
+    shadowDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    shadowDesc.SampleDesc.Count = 1;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&shadowDesc, IID_PPV_ARGS(&m_shadowPSO)));
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)

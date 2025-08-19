@@ -25,12 +25,18 @@ GBuffer::GBuffer(DX12Framework* framework,
     depthSrvIndex = m_srvStartIndex + 3;
 }
 
-void GBuffer::Initialize() {
+void GBuffer::Initialize()
+{
     CreateResources();
     CreateDescriptors();
+    m_rtAlbedo->SetName(L"GBuffer.Albedo");
+    m_rtNormal->SetName(L"GBuffer.Normal");
+    m_rtMaterial->SetName(L"GBuffer.Material");
+    m_depth->SetName(L"GBuffer.Depth");
 }
 
-void GBuffer::CreateResources() {
+void GBuffer::CreateResources()
+{
     CD3DX12_RESOURCE_DESC texDesc = CD3DX12_RESOURCE_DESC::Tex2D(
         DXGI_FORMAT_R8G8B8A8_UNORM, m_width, m_height,
         1, 1, 1, 0,
@@ -76,7 +82,8 @@ void GBuffer::CreateResources() {
         &clearDS, IID_PPV_ARGS(&m_depth))); 
 }
 
-void GBuffer::CreateDescriptors() {
+void GBuffer::CreateDescriptors()
+{
     auto cpuRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
         m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
         m_rtvStartIndex, m_rtvDescriptorSize);
@@ -132,7 +139,8 @@ void GBuffer::CreateDescriptors() {
     m_framework->GetDevice()->CreateShaderResourceView(m_depth.Get(), &dsDesc, cpuDS);
 }
 
-void GBuffer::Bind(ID3D12GraphicsCommandList* cmd) {
+void GBuffer::Bind(ID3D12GraphicsCommandList* cmd) 
+{
     D3D12_RESOURCE_BARRIER barriers[4] = {
         CD3DX12_RESOURCE_BARRIER::Transition(m_rtAlbedo.Get(),
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
@@ -149,7 +157,8 @@ void GBuffer::Bind(ID3D12GraphicsCommandList* cmd) {
     };
     cmd->ResourceBarrier(4, barriers);
 
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = {
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = 
+    {
         CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
             m_rtvStartIndex, m_rtvDescriptorSize),
         CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
@@ -161,8 +170,10 @@ void GBuffer::Bind(ID3D12GraphicsCommandList* cmd) {
     cmd->OMSetRenderTargets(_countof(rtvs), rtvs, FALSE, &dsv);
 }
 
-void GBuffer::Clear(ID3D12GraphicsCommandList* cmd, const FLOAT clearColor[4]) {
-    for (UINT i = 0; i < 3; ++i) {
+void GBuffer::Clear(ID3D12GraphicsCommandList* cmd, const FLOAT clearColor[4]) 
+{
+    for (UINT i = 0; i < 3; ++i)
+    {
         auto rtv = CD3DX12_CPU_DESCRIPTOR_HANDLE(
             m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
             m_rtvStartIndex + i, m_rtvDescriptorSize);
@@ -173,7 +184,8 @@ void GBuffer::Clear(ID3D12GraphicsCommandList* cmd, const FLOAT clearColor[4]) {
     cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 }
 
-std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> GBuffer::GetSRVs() const {
+std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> GBuffer::GetSRVs() const
+{
     std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> handles(4);
     auto gpuStart = CD3DX12_GPU_DESCRIPTOR_HANDLE(
         m_srvHeap->GetGPUDescriptorHandleForHeapStart(),
@@ -183,7 +195,8 @@ std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> GBuffer::GetSRVs() const {
     return handles;
 }
 
-void GBuffer::TransitionToReadable(ID3D12GraphicsCommandList* cmd) {
+void GBuffer::TransitionToReadable(ID3D12GraphicsCommandList* cmd)
+{
     D3D12_RESOURCE_BARRIER barriers[4] = {
         CD3DX12_RESOURCE_BARRIER::Transition(m_rtAlbedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         CD3DX12_RESOURCE_BARRIER::Transition(m_rtNormal.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),

@@ -11,6 +11,7 @@
 #include "GBuffer.h"
 #include "Light.h"
 #include "Timer.h"
+#include "ShadowMap.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -31,6 +32,7 @@ private:
     Pipeline       m_pipeline;
     AssetLoader    loader;
     std::unique_ptr<GBuffer> m_gbuffer;
+    std::unique_ptr <ShadowMap> m_shadow;
     Timer          timer;
 
     std::vector<SceneObject>  m_objects;
@@ -42,16 +44,24 @@ private:
     ComPtr<ID3D12Resource> m_ambientBuffer;
     ComPtr<ID3D12Resource> m_tessBuffer;
     ComPtr<ID3D12Resource> m_materialBuffer;
+    ComPtr<ID3D12Resource> m_shadowBuffer;
 
     uint8_t* m_pCbData = nullptr;
     uint8_t* m_pLightData = nullptr;
     uint8_t* m_pAmbientData = nullptr;
     uint8_t* m_pTessCbData = nullptr;
     uint8_t* m_pMaterialData = nullptr;
+    uint8_t* m_pShadowCbData = nullptr;
+
+    XMMATRIX view, proj, viewProj;
+    ID3D12GraphicsCommandList* cmd;
+    XMFLOAT4X4 m_lightViewProj;
 
     float m_yaw = 0.f;
     float m_pitch = 0.f;
     XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
+    float m_near = 0.1f;
+    float m_far = 5000.0f;
 
     float cameraSpeed = 3.0f;
     float acceleration = 3.0f;
@@ -61,17 +71,15 @@ private:
     float m_heightScale = 0.0f;
     float m_maxTess = 1.0f;
     bool  m_wireframe = false;
-    float m_objectScale = 40.0f;
+    float m_objectScale = 1.0f;
     XMFLOAT3 m_objectRotationDeg{ 0,0,0 };
+    int objectIdx = 0;
     float m_useNormalMap = 0.0f;
     float m_fakeCameraZ = 0.0f;
 
     float m_currentFPS = 0.0f;
 
     XMFLOAT3 direction = {-1.0f, -2.0f, -1.0f};
-
-    XMMATRIX view, proj, viewProj;
-    ID3D12GraphicsCommandList* cmd;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -95,4 +103,7 @@ private:
     void GeometryPass();
     void DeferredPass();
     void SetCommonHeaps();
+
+    void ShadowPass();
+    void BuildLightViewProj();
 };

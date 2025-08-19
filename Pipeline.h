@@ -23,7 +23,7 @@ public:
     ID3D12PipelineState* GetAmbientPSO()  const { return m_ambientPSO.Get(); }
     ID3D12PipelineState* GetGBufferTessellationPSO()  const { return m_gBufferTessellationPSO.Get(); }
     ID3D12PipelineState* GetGBufferTessellationWireframePSO()  const { return m_gBufferTessellationWireframePSO.Get(); }
-
+    ID3D12PipelineState* GetShadowPSO()     const { return m_shadowPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -37,6 +37,7 @@ private:
     ComPtr<ID3D12PipelineState> m_ambientPSO;
     ComPtr<ID3D12PipelineState> m_gBufferTessellationPSO;
     ComPtr<ID3D12PipelineState> m_gBufferTessellationWireframePSO;
+    ComPtr<ID3D12PipelineState> m_shadowPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

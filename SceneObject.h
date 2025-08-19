@@ -47,7 +47,7 @@ struct SceneObject {
 
     SceneObject() = default;
 
-    explicit SceneObject(
+    SceneObject(
         Mesh mesh,
         XMFLOAT3 pos,
         XMFLOAT3 rot,
