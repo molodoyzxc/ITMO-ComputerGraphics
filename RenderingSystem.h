@@ -12,6 +12,7 @@
 #include "Light.h"
 #include "Timer.h"
 #include "ShadowMap.h"
+#include <array>
 
 using Microsoft::WRL::ComPtr;
 
@@ -29,15 +30,15 @@ public:
 private:
     DX12Framework* m_framework;
     InputDevice* m_input;
-    Pipeline       m_pipeline;
-    AssetLoader    loader;
+    Pipeline m_pipeline;
+    AssetLoader loader;
     std::unique_ptr<GBuffer> m_gbuffer;
     std::unique_ptr <ShadowMap> m_shadow;
-    Timer          timer;
+    Timer timer;
 
-    std::vector<SceneObject>  m_objects;
+    std::vector<SceneObject> m_objects;
     std::vector<SceneObject*> m_visibleObjects;
-    std::vector<Light>        lights;
+    std::vector<Light> lights;
 
     ComPtr<ID3D12Resource> m_constantBuffer;
     ComPtr<ID3D12Resource> m_lightBuffer;
@@ -61,7 +62,7 @@ private:
     float m_pitch = 0.f;
     XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
     float m_near = 0.1f;
-    float m_far = 5000.0f;
+    float m_far = 50000.0f;
 
     float cameraSpeed = 3.0f;
     float acceleration = 3.0f;
@@ -80,6 +81,11 @@ private:
     float m_currentFPS = 0.0f;
 
     XMFLOAT3 direction = {-1.0f, -2.0f, -1.0f};
+    static constexpr UINT CSM_CASCADES = 4;
+    XMFLOAT4X4 m_lightViewProjCSM[CSM_CASCADES];
+    float m_cascadeSplits[CSM_CASCADES];
+    std::array<std::vector<SceneObject*>, CSM_CASCADES> m_shadowCasters;
+    std::array<float, CSM_CASCADES> m_biasPerCascade{};
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -105,5 +111,13 @@ private:
     void SetCommonHeaps();
 
     void ShadowPass();
-    void BuildLightViewProj();
+    void BuildLightViewProjCSM();
+    void ExtractShadowCastersForCascade
+    (
+        UINT ci,
+        const XMMATRIX& LV,
+        float minX, float maxX,
+        float minY, float maxY,
+        float minZ, float maxZ
+    );
 };

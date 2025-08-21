@@ -203,7 +203,7 @@ void DX12Framework::CreateDescriptorHeaps()
 
     // DSV куча
     D3D12_DESCRIPTOR_HEAP_DESC dsvDesc = {};
-    dsvDesc.NumDescriptors = 2;
+    dsvDesc.NumDescriptors = 5;
     dsvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     ThrowIfFailed(m_device->CreateDescriptorHeap(
         &dsvDesc, IID_PPV_ARGS(&m_dsvHeap)));

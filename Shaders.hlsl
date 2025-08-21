@@ -20,7 +20,9 @@ cbuffer LightingCB : register(b1)
     row_major float4x4 InvViewProj;
     float4 ScreenSize;
     
-    row_major float4x4 LightViewProj;
+    row_major float4x4 LightViewProj[4];
+    float4 CascadeSplits;
+    row_major float4x4 View;
     float4 ShadowParams;
 };
 
@@ -48,7 +50,7 @@ Texture2D gAlbedoTex : register(t0);
 Texture2D gNormalTex : register(t1);
 Texture2D gParamTex : register(t2);
 Texture2D<float> gDepthTex : register(t3);
-Texture2D<float> gShadowMap : register(t4);
+Texture2DArray<float> gShadowMap : register(t4);
 
 SamplerState samLinear : register(s0);
 SamplerComparisonState samShadow : register(s1);
@@ -92,9 +94,9 @@ VSShadowOut VS_Shadow(VSInput IN)
     return OUT;
 }
 
-float3 ProjectToShadowTex(float3 worldPos)
+float3 ProjectToShadowTex(float3 worldPos, uint cascadeIdx)
 {
-    float4 lp = mul(float4(worldPos, 1.0), LightViewProj);
+    float4 lp = mul(float4(worldPos, 1.0), LightViewProj[cascadeIdx]);
     if (lp.w <= 0.0)
         return float3(-1.0, -1.0, 0.0);
     lp.xyz /= lp.w;
@@ -102,19 +104,18 @@ float3 ProjectToShadowTex(float3 worldPos)
     return float3(uv, lp.z);
 }
 
-
-
-float PCF_Shadow(float3 worldPos)
+float PCF_Shadow(float3 worldPos, uint cascadeIdx)
 {
-    float3 suvz = ProjectToShadowTex(worldPos);
+    float3 suvz = ProjectToShadowTex(worldPos, cascadeIdx);
     float2 uv = suvz.xy;
     float z = suvz.z;
-    
+
     if (any(uv < 0.0) || any(uv > 1.0))
         return 1.0;
-    
+
     float texel = ShadowParams.x;
     float bias = ShadowParams.y;
+
     float sum = 0.0;
     [unroll]
     for (int dy = -1; dy <= 1; ++dy)
@@ -123,10 +124,24 @@ float PCF_Shadow(float3 worldPos)
         for (int dx = -1; dx <= 1; ++dx)
         {
             float2 o = float2(dx, dy) * texel;
-            sum += gShadowMap.SampleCmpLevelZero(samShadow, uv + o, z - bias);
+            sum += gShadowMap.SampleCmpLevelZero(samShadow, float3(uv + o, cascadeIdx), z - bias);
         }
     }
     return sum / 9.0;
+}
+
+uint ChooseCascade(float3 worldPos)
+{
+    float3 viewPos = mul(float4(worldPos, 1.0), View).xyz;
+    float vz = viewPos.z;
+    uint count = (uint) ShadowParams.z;
+
+    uint ci = 0;
+    ci += (vz > CascadeSplits.x) ? 1u : 0u;
+    ci += (vz > CascadeSplits.y) ? 1u : 0u;
+    ci += (vz > CascadeSplits.z) ? 1u : 0u;
+    ci = min(ci, count - 1u);
+    return ci;
 }
 
 VSOutput VS_GBuffer(VSInput IN)
@@ -249,7 +264,11 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
     {
         float3 Ldir = normalize(-LightDir.xyz);
         float nL = max(dot(worldNormal, Ldir), 0.0);
-        shadow = PCF_Shadow(worldPos);
+        uint cascadeIdx = ChooseCascade(worldPos);
+        shadow = PCF_Shadow(worldPos, cascadeIdx);
+        //uint c = ChooseCascade(worldPos);
+        //float3 debugC = (c == 0) ? float3(1, 0, 0) : (c == 1) ? float3(0, 1, 0) : (c == 2) ? float3(0, 0, 1) : float3(1, 1, 0);
+        //result += debugC * 0.5;
         result += albedo.rgb * LightColor.rgb * nL * shadow;
     }
     else if (LightType == 1)  // Point

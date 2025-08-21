@@ -21,7 +21,9 @@ struct LightCB {
     XMFLOAT4 SpotOuterPad;
     XMFLOAT4X4 InvViewProj;
     XMFLOAT4 ScreenSize;
-    XMFLOAT4X4 LightViewProj;
+    XMFLOAT4X4 LightViewProj[4];
+    XMFLOAT4   CascadeSplits;
+    XMFLOAT4X4 View;
     XMFLOAT4   ShadowParams;
 };
 
@@ -105,13 +107,13 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            //"Assets\\SponzaCrytek\\sponza.obj", 
-            "Assets\\Test2\\test.obj", 
+            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\Test2\\test.obj", 
         },
         { 0.0f, }
     );
 
-    m_objectScale = 11.0f;
+    m_objectScale = 1.0f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -173,8 +175,8 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    std::filesystem::path sceneFolder = L"Assets\\Test2";
+    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\Test2";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -266,7 +268,7 @@ void RenderingSystem::CreateConstantBuffers()
 
     {
         const UINT cbSize = Align256(sizeof(CB));
-        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size());
+        const UINT totalSize = cbSize * static_cast<UINT>(m_objects.size()) * CSM_CASCADES;
         const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
         CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
         ThrowIfFailed(m_framework->GetDevice()->CreateCommittedResource(
@@ -293,7 +295,7 @@ void RenderingSystem::Initialize()
     );
     m_gbuffer->Initialize();
 
-    m_shadow = std::make_unique<ShadowMap>(m_framework, 2048 * 8);
+    m_shadow = std::make_unique<ShadowMap>(m_framework, 2048 * 4, CSM_CASCADES);
     m_shadow->Initialize();
 
     auto* alloc = m_framework->GetCommandAllocator();
@@ -546,8 +548,19 @@ void RenderingSystem::UpdateLightCB()
         cb.SpotOuterPad = { L.outerCone(), 0, 0, 0 };
         cb.ScreenSize = { static_cast<float>(m_framework->GetWidth()), static_cast<float>(m_framework->GetHeight()), 0, 0 };
 
-        cb.LightViewProj = m_lightViewProj;
-        cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, 0, 0 };
+        for (UINT ci = 0; ci < CSM_CASCADES; ++ci)
+            cb.LightViewProj[ci] = m_lightViewProjCSM[ci];
+
+        cb.CascadeSplits = {
+            m_cascadeSplits[0],
+            m_cascadeSplits[1],
+            m_cascadeSplits[2],
+            (CSM_CASCADES > 3 ? m_cascadeSplits[3] : m_cascadeSplits[2])
+        };
+
+        XMStoreFloat4x4(&cb.View, view);
+
+        cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, (float)m_shadow->CascadeCount(), 0 };
 
         memcpy(m_pLightData + static_cast<UINT>(i) * lightCBSize, &cb, sizeof(cb));
     }
@@ -657,83 +670,112 @@ void RenderingSystem::DeferredPass()
     }
 }
 
-void RenderingSystem::BuildLightViewProj()
+void RenderingSystem::BuildLightViewProjCSM()
 {
+    const float n = m_near;
+    const float f = m_far;
+    const float lambda = 0.5f;
+    float splits[CSM_CASCADES];
+    for (UINT i = 0; i < CSM_CASCADES; ++i)
+    {
+        float p = (i + 1) / float(CSM_CASCADES);
+        float logS = n * powf(f / n, p);
+        float uniS = n + (f - n) * p;
+        splits[i] = (1.0f - lambda) * uniS + lambda * logS;
+        m_cascadeSplits[i] = splits[i];
+    }
+
     XMVECTOR L = XMVector3Normalize(XMLoadFloat3(&direction));
     XMVECTOR up = XMVectorSet(0, 1, 0, 0);
     const float dotY = XMVectorGetX(XMVector3Dot(L, up));
     if (fabsf(dotY) > 0.99f) up = XMVectorSet(0, 0, 1, 0);
 
-    XMMATRIX invVP = XMMatrixInverse(nullptr, viewProj);
-    XMVECTOR clip[8] = {
-        XMVectorSet(-1,-1,0,1), XMVectorSet(1,-1,0,1),
-        XMVectorSet(1, 1,0,1), XMVectorSet(-1, 1,0,1),
-        XMVectorSet(-1,-1,1,1), XMVectorSet(1,-1,1,1),
-        XMVectorSet(1, 1,1,1), XMVectorSet(-1, 1,1,1),
-    };
-    XMVECTOR frustumWS[8];
-    XMVECTOR center = XMVectorZero();
-    for (int i = 0; i < 8; ++i) {
-        XMVECTOR v = XMVector4Transform(clip[i], invVP);
-        v = XMVectorScale(v, 1.0f / XMVectorGetW(v));
-        frustumWS[i] = v;
-        center = XMVectorAdd(center, v);
+    const float aspect = static_cast<float>(m_framework->GetWidth()) / m_framework->GetHeight();
+    const float fov = XM_PIDIV4;
+    XMMATRIX V = view;
+
+    const float overlapRatio = 0.15f;
+    const float receiverPadXY = 100.0f;
+    const float receiverPadZ = 200.0f;
+    const float minCasterExt = 2000.0f;
+
+    for (UINT ci = 0; ci < CSM_CASCADES; ++ci)
+    {
+        float splitNear = (ci == 0 ? n : splits[ci - 1]);
+        float splitFar = splits[ci];
+
+        float range = (splitFar - splitNear);
+        float zOverlap = overlapRatio * range;
+        float splitNearOver = max(n, splitNear - zOverlap);
+        float splitFarOver = min(f, splitFar + zOverlap);
+
+        XMMATRIX Psplit = XMMatrixPerspectiveFovLH(fov, aspect, splitNearOver, splitFarOver);
+        XMMATRIX invVP = XMMatrixInverse(nullptr, V * Psplit);
+
+        XMVECTOR clip[8] = {
+            XMVectorSet(-1,-1,0,1), XMVectorSet(1,-1,0,1),
+            XMVectorSet(1, 1,0,1), XMVectorSet(-1, 1,0,1),
+            XMVectorSet(-1,-1,1,1), XMVectorSet(1,-1,1,1),
+            XMVectorSet(1, 1,1,1), XMVectorSet(-1, 1,1,1),
+        };
+        XMVECTOR cornersWS[8];
+        XMVECTOR center = XMVectorZero();
+        for (int i = 0; i < 8; ++i) {
+            XMVECTOR v = XMVector4Transform(clip[i], invVP);
+            v = XMVectorScale(v, 1.0f / XMVectorGetW(v));
+            cornersWS[i] = v;
+            center = XMVectorAdd(center, v);
+        }
+        center = XMVectorScale(center, 1.0f / 8.0f);
+
+        const float distBack = splitFarOver;
+        XMVECTOR eye = XMVectorSubtract(center, XMVectorScale(L, distBack));
+        XMMATRIX LV = XMMatrixLookAtLH(eye, center, up);
+
+        XMVECTOR minv = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0);
+        XMVECTOR maxv = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0);
+        for (int i = 0; i < 8; ++i) {
+            XMVECTOR p = XMVector3TransformCoord(cornersWS[i], LV);
+            minv = XMVectorMin(minv, p);
+            maxv = XMVectorMax(maxv, p);
+        }
+        float minX = XMVectorGetX(minv), maxX = XMVectorGetX(maxv);
+        float minY = XMVectorGetY(minv), maxY = XMVectorGetY(maxv);
+        float minZ = XMVectorGetZ(minv), maxZ = XMVectorGetZ(maxv);
+
+        float w = (maxX - minX);
+        float h = (maxY - minY);
+
+        float worldUnitsPerTexel = max(w, h) / m_shadow->Size();
+        float cx = 0.5f * (minX + maxX);
+        float cy = 0.5f * (minY + maxY);
+        cx = floorf(cx / worldUnitsPerTexel) * worldUnitsPerTexel;
+        cy = floorf(cy / worldUnitsPerTexel) * worldUnitsPerTexel;
+        float hx = 0.5f * w, hy = 0.5f * h;
+        minX = cx - hx; maxX = cx + hx;
+        minY = cy - hy; maxY = cy + hy;
+
+        minX -= receiverPadXY; maxX += receiverPadXY;
+        minY -= receiverPadXY; maxY += receiverPadXY;
+
+        const float casterExt = max(minCasterExt, 4.0f * range);
+        const float recvPadZ = receiverPadZ;
+
+        minZ = max(0.1f, minZ - casterExt);
+        maxZ = maxZ + recvPadZ;
+
+        XMMATRIX LP = XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, minZ, maxZ);
+        XMMATRIX LVP = LV * LP;
+
+        XMStoreFloat4x4(&m_lightViewProjCSM[ci], LVP);
+
+        ExtractShadowCastersForCascade(ci, LV, minX, maxX, minY, maxY, minZ, maxZ);
     }
-    center = XMVectorScale(center, 1.0f / 8.0f);
-
-    const float dist = m_far;
-    XMVECTOR eye = XMVectorSubtract(center, XMVectorScale(L, dist));
-    XMMATRIX lv = XMMatrixLookAtLH(eye, center, up);
-
-    XMVECTOR minv = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0);
-    XMVECTOR maxv = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0);
-    for (int i = 0; i < 8; ++i) {
-        XMVECTOR p = XMVector3TransformCoord(frustumWS[i], lv);
-        minv = XMVectorMin(minv, p);
-        maxv = XMVectorMax(maxv, p);
-    }
-    float minX = XMVectorGetX(minv), maxX = XMVectorGetX(maxv);
-    float minY = XMVectorGetY(minv), maxY = XMVectorGetY(maxv);
-    float minZ = XMVectorGetZ(minv), maxZ = XMVectorGetZ(maxv);
-
-    const float shadowSize = m_shadow->Size();
-    float w = (maxX - minX);
-    float h = (maxY - minY);
-    float worldUnitsPerTexel = max(w, h) / shadowSize;
-
-    float cx = 0.5f * (minX + maxX);
-    float cy = 0.5f * (minY + maxY);
-    cx = floorf(cx / worldUnitsPerTexel) * worldUnitsPerTexel;
-    cy = floorf(cy / worldUnitsPerTexel) * worldUnitsPerTexel;
-
-    float hx = 0.5f * w;
-    float hy = 0.5f * h;
-    minX = cx - hx;  maxX = cx + hx;
-    minY = cy - hy;  maxY = cy + hy;
-
-    const float pad = 50.0f;
-    minX -= pad; maxX += pad; minY -= pad; maxY += pad;
-    minZ = max(0.1f, minZ - pad);
-    maxZ = maxZ + pad;
-
-    XMMATRIX lp = XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, minZ, maxZ);
-
-    XMMATRIX lvp = lv * lp;
-    XMStoreFloat4x4(&m_lightViewProj, lvp);
 }
 
 void RenderingSystem::ShadowPass()
 {
-    BuildLightViewProj();
-
-    const UINT cbSize = Align256(sizeof(CB));
-    for (size_t i = 0; i < m_visibleObjects.size(); ++i) {
-        SceneObject* obj = m_visibleObjects[i];
-        CB cb{};
-        XMStoreFloat4x4(&cb.World, obj->GetWorldMatrix());
-        cb.ViewProj = m_lightViewProj;
-        memcpy(m_pShadowCbData + (UINT)i * cbSize, &cb, sizeof(cb));
-    }
+    BuildLightViewProjCSM();
 
     auto* cl = m_framework->GetCommandList();
 
@@ -744,10 +786,6 @@ void RenderingSystem::ShadowPass()
     );
     cl->ResourceBarrier(1, &toWrite);
 
-    auto dsv = m_shadow->Dsv();
-    cl->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
-    cl->ClearDepthStencilView(m_shadow->Dsv(), D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-
     auto vp = m_shadow->GetViewport();
     auto sc = m_shadow->GetScissor();
     cl->RSSetViewports(1, &vp);
@@ -755,20 +793,38 @@ void RenderingSystem::ShadowPass()
 
     cl->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
     SetCommonHeaps();
-
     cl->SetPipelineState(m_pipeline.GetShadowPSO());
+    cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-    const UINT materialSize = Align256(sizeof(MaterialCB));
-    for (size_t i = 0; i < m_visibleObjects.size(); ++i) {
-        SceneObject* obj = m_visibleObjects[i];
+    const UINT cbSize = Align256(sizeof(CB));
+    const UINT perCascadeCapacity = static_cast<UINT>(m_objects.size());
 
-        cl->SetGraphicsRootConstantBufferView(0, m_shadowBuffer->GetGPUVirtualAddress() + (UINT)i * cbSize);
+    for (UINT ci = 0; ci < CSM_CASCADES; ++ci)
+    {
+        auto dsv = m_shadow->Dsv(ci);
+        cl->OMSetRenderTargets(0, nullptr, FALSE, &dsv);
+        cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-        int lod = (int)obj->lodMeshes.size() - 1;
-        cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        cl->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
-        cl->IASetIndexBuffer(&obj->lodIBs[lod]);
-        cl->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
+        const UINT base = ci * perCascadeCapacity;
+
+        for (size_t i = 0; i < m_shadowCasters[ci].size(); ++i)
+        {
+            SceneObject* obj = m_shadowCasters[ci][i];
+
+            CB cb{};
+            XMStoreFloat4x4(&cb.World, obj->GetWorldMatrix());
+            cb.ViewProj = m_lightViewProjCSM[ci];
+
+            const UINT slot = base + static_cast<UINT>(i);
+            memcpy(m_pShadowCbData + slot * cbSize, &cb, sizeof(cb));
+            cl->SetGraphicsRootConstantBufferView(
+                0, m_shadowBuffer->GetGPUVirtualAddress() + slot * cbSize);
+
+            int lod = (int)obj->lodMeshes.size() - 1;
+            cl->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
+            cl->IASetIndexBuffer(&obj->lodIBs[lod]);
+            cl->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
+        }
     }
 
     auto toRead = CD3DX12_RESOURCE_BARRIER::Transition(
@@ -777,4 +833,33 @@ void RenderingSystem::ShadowPass()
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
     );
     cl->ResourceBarrier(1, &toRead);
+}
+
+void RenderingSystem::ExtractShadowCastersForCascade(UINT ci, const XMMATRIX& LV, float minX, float maxX, float minY, float maxY, float minZ, float maxZ)
+{
+    m_shadowCasters[ci].clear();
+    m_shadowCasters[ci].reserve(m_objects.size());
+
+    XMVECTOR bmin = XMVectorSet(minX, minY, minZ, 0);
+    XMVECTOR bmax = XMVectorSet(maxX, maxY, maxZ, 0);
+
+    for (auto& o : m_objects)
+    {
+        const XMMATRIX world = o.GetWorldMatrix();
+        XMVECTOR cW = XMVector3Transform(XMLoadFloat3(&o.bsCenter), world);
+
+        const auto& s = o.scale;
+        float scaleLen = std::sqrt(s.x * s.x + s.y * s.y + s.z * s.z);
+        float rW = o.bsRadius * scaleLen;
+
+        XMVECTOR cL = XMVector3TransformCoord(cW, LV);
+
+        XMVECTOR minS = XMVectorSet(XMVectorGetX(cL) - rW, XMVectorGetY(cL) - rW, XMVectorGetZ(cL) - rW, 0);
+        XMVECTOR maxS = XMVectorSet(XMVectorGetX(cL) + rW, XMVectorGetY(cL) + rW, XMVectorGetZ(cL) + rW, 0);
+
+        XMVECTOR overMin = XMVectorGreaterOrEqual(maxS, bmin);
+        XMVECTOR underMax = XMVectorLessOrEqual(minS, bmax);
+        if (XMVector3EqualInt(XMVectorAndInt(overMin, underMax), XMVectorTrueInt()))
+            m_shadowCasters[ci].push_back(&o);
+    }
 }
