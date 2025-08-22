@@ -15,6 +15,7 @@ public:
     void Init();
     void Clear(const FLOAT clearColor[4]);
     void Present();
+    void CreateDefaultBuffer(ID3D12GraphicsCommandList* cmdList, void* initData, UINT64 byteSize, ComPtr<ID3D12Resource>& defaultBuffer, ComPtr<ID3D12Resource>& uploadBuffer);
     D3D12_CPU_DESCRIPTOR_HANDLE GetDSVHandle() const { return m_dsvHandle; }
     ID3D12Device* GetDevice() const { return m_device.Get(); }
     ID3D12CommandQueue* GetCommandQueue() const { return m_commandQueue.Get(); }

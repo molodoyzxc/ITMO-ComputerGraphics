@@ -107,8 +107,8 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
-            //"Assets\\Test2\\test.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
+            "Assets\\Test2\\test.obj", 
         },
         { 0.0f, }
     );
@@ -295,7 +295,7 @@ void RenderingSystem::Initialize()
     );
     m_gbuffer->Initialize();
 
-    m_shadow = std::make_unique<ShadowMap>(m_framework, 2048 * 4, CSM_CASCADES);
+    m_shadow = std::make_unique<ShadowMap>(m_framework, 2048 * 6, CSM_CASCADES);
     m_shadow->Initialize();
 
     auto* alloc = m_framework->GetCommandAllocator();
@@ -314,10 +314,15 @@ void RenderingSystem::Initialize()
     LoadErrorTextures();
     LoadTextures();
     CreateConstantBuffers();
+
+    m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
+    m_particles->Initialize(100000, 20000);
 }
 
 void RenderingSystem::Update(float)
 {
+    dt = timer.GetElapsedSeconds();
+
     if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
     if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
     if (m_input->IsKeyDown(Keys::F3)) lights[0].type = 2;
@@ -350,11 +355,16 @@ void RenderingSystem::Render()
     UpdateUI();
 
     BuildViewProj();
+
+    m_particles->UpdateViewProj(viewProj);
+
     ExtractVisibleObjects();
     UpdatePerObjectCBs();
     UpdateTessellationCB();
 
     ShadowPass();
+
+    m_particles->Simulate(cmd, dt);
 
     m_gbuffer->Bind(cmd);
     const float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
@@ -634,6 +644,8 @@ void RenderingSystem::GeometryPass()
         cmd->IASetIndexBuffer(&obj->lodIBs[lod]);
         cmd->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
     }
+
+    m_particles->DrawGBuffer(cmd);
 }
 
 void RenderingSystem::DeferredPass()

@@ -25,7 +25,7 @@ void Pipeline::Init()
     compileFlags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
-    ComPtr<IDxcBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob, vsShadow;
+    ComPtr<IDxcBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob;
     Compile(L"Shaders.hlsl", L"VSMain", L"vs_6_0", vsBlob);
     Compile(L"Shaders.hlsl", L"PSMain", L"ps_6_0", psBlob);
     Compile(L"Shaders.hlsl", L"VS_GBuffer", L"vs_6_0", vsG);
@@ -33,12 +33,22 @@ void Pipeline::Init()
     Compile(L"Shaders.hlsl", L"VS_Quad", L"vs_6_0", vsQuad);
     Compile(L"Shaders.hlsl", L"PS_Lighting", L"ps_6_0", psLight);
     Compile(L"Shaders.hlsl", L"PS_Ambient", L"ps_6_0", psAmbientBlob);
-    Compile(L"Shaders.hlsl", L"VS_Shadow", L"vs_6_0", vsShadow);
 
     ComPtr<IDxcBlob> vsTessBlob, hsTessBlob, dsTessBlob;
     Compile(L"Tessellation.hlsl", L"VSMain", L"vs_6_0", vsTessBlob);
     Compile(L"Tessellation.hlsl", L"HSMain", L"hs_6_0", hsTessBlob);
     Compile(L"Tessellation.hlsl", L"DSMain", L"ds_6_0", dsTessBlob);
+
+    ComPtr<IDxcBlob> vsShadow;
+    Compile(L"Shaders.hlsl", L"VS_Shadow", L"vs_6_0", vsShadow);
+
+    ComPtr<IDxcBlob> vsGPart, psGPart;
+    Compile(L"Shaders.hlsl", L"VS_GBufferParticle", L"vs_6_0", vsGPart);
+    Compile(L"Shaders.hlsl", L"PS_GBufferParticle", L"ps_6_0", psGPart);
+
+    ComPtr<IDxcBlob> csUpdate, csEmit;
+    Compile(L"ParticlesCS.hlsl", L"CS_Update", L"cs_6_0", csUpdate);
+    Compile(L"ParticlesCS.hlsl", L"CS_Emit", L"cs_6_0", csEmit);
 
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -56,13 +66,14 @@ void Pipeline::Init()
     CD3DX12_DESCRIPTOR_RANGE srvRange;
     srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MaxSrv, 0);
     
-    CD3DX12_ROOT_PARAMETER slotParam[6];
+    CD3DX12_ROOT_PARAMETER slotParam[7];
     slotParam[0].InitAsConstantBufferView(0, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[1].InitAsConstantBufferView(1, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[2].InitAsConstantBufferView(3, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[3].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[4].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_ALL);
     slotParam[5].InitAsConstantBufferView(4, D3D12_SHADER_VISIBILITY_ALL);
+    slotParam[6].InitAsShaderResourceView(0, 1,D3D12_SHADER_VISIBILITY_ALL);
 
     CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc;
     rootSigDesc.Init(
@@ -265,6 +276,49 @@ void Pipeline::Init()
     shadowDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     shadowDesc.SampleDesc.Count = 1;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&shadowDesc, IID_PPV_ARGS(&m_shadowPSO)));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoGP = {};
+    psoGP.pRootSignature = m_rootSignature.Get();
+    psoGP.VS = { vsGPart->GetBufferPointer(), vsGPart->GetBufferSize() };
+    psoGP.PS = { psGPart->GetBufferPointer(), psGPart->GetBufferSize() };
+    psoGP.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    psoGP.SampleMask = UINT_MAX;
+    psoGP.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    psoGP.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    psoGP.InputLayout = { inputLayout, _countof(inputLayout) };
+    psoGP.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+    psoGP.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoGP.NumRenderTargets = 3;
+    psoGP.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    psoGP.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    psoGP.RTVFormats[2] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    psoGP.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+    psoGP.SampleDesc.Count = 1;
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &psoGP, IID_PPV_ARGS(&m_gbufferParticlesPSO)));
+
+    CD3DX12_DESCRIPTOR_RANGE uavRange;
+    uavRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0);
+
+    CD3DX12_ROOT_PARAMETER crp[2];
+    crp[0].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
+    crp[1].InitAsConstantBufferView(5, D3D12_SHADER_VISIBILITY_ALL);        
+
+    CD3DX12_ROOT_SIGNATURE_DESC csDesc;
+    csDesc.Init(_countof(crp), crp, 0, nullptr);
+
+    ComPtr<ID3DBlob> sigBlob, sigErr;
+    ThrowIfFailed(D3D12SerializeRootSignature(&csDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &sigErr));
+    ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(
+        0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&m_particlesComputeRS)));
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC csd = {};
+    csd.pRootSignature = m_particlesComputeRS.Get();
+    csd.CS = { csUpdate->GetBufferPointer(), csUpdate->GetBufferSize() };
+    ThrowIfFailed(m_framework->GetDevice()->CreateComputePipelineState(&csd, IID_PPV_ARGS(&m_particlesUpdateCSO)));
+    csd.CS = { csEmit->GetBufferPointer(), csEmit->GetBufferSize() };
+    ThrowIfFailed(m_framework->GetDevice()->CreateComputePipelineState(&csd, IID_PPV_ARGS(&m_particlesEmitCSO)));
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)

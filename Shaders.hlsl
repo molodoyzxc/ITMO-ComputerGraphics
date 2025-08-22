@@ -86,6 +86,49 @@ struct VSShadowOut
     float4 posH : SV_POSITION;
 };
 
+struct Particle
+{
+    float3 pos;
+    float3 vel;
+    float age;
+    float lifetime;
+    float size;
+};
+
+StructuredBuffer<Particle> gParticles : register(t0, space1);
+
+VSOutput VS_GBufferParticle(VSInput IN, uint instanceId : SV_InstanceID)
+{
+    Particle P = gParticles[instanceId];
+    
+    float3 local = IN.pos * P.size + P.pos;
+
+    VSOutput OUT;
+    float4 wp = mul(float4(local, 1.0), World);
+    OUT.worldPos = wp;
+    OUT.posH = mul(wp, ViewProj);
+
+    float3 N = normalize(mul(IN.normal, (float3x3) World));
+    float3 T = normalize(mul(IN.tangent, (float3x3) World));
+    OUT.normal = N;
+    OUT.uv = IN.uv;
+    OUT.tangent = T;
+    OUT.handed = IN.handed;
+    return OUT;
+}
+
+GBufferOut PS_GBufferParticle(VSOutput IN)
+{
+    GBufferOut OUT;
+    float3 N = normalize(IN.normal);
+
+    OUT.Albedo = float4(1.0, 0.6, 0.2, 1.0);
+    OUT.Normal = float4(N * 0.5 + 0.5, 0.0);
+    OUT.Params = float4(0.5, 0.0, 1.0, 0.0);
+
+    return OUT;
+}
+
 VSShadowOut VS_Shadow(VSInput IN)
 {
     VSShadowOut OUT;

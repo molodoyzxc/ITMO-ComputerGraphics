@@ -15,15 +15,19 @@ public:
     void Init();
 
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature.Get(); }
-    ID3D12PipelineState* GetOpaquePSO()    const { return m_opaquePSO.Get(); }
-    ID3D12PipelineState* GetTransparentPSO()    const { return m_transparentPSO.Get(); }
-    ID3D12PipelineState* GetGBufferPSO()    const { return m_gBufferPSO.Get(); }
-    ID3D12RootSignature* GetDeferredRS()   const { return m_deferredRootSig.Get(); }
-    ID3D12PipelineState* GetDeferredPSO()  const { return m_deferredPSO.Get(); }
-    ID3D12PipelineState* GetAmbientPSO()  const { return m_ambientPSO.Get(); }
-    ID3D12PipelineState* GetGBufferTessellationPSO()  const { return m_gBufferTessellationPSO.Get(); }
-    ID3D12PipelineState* GetGBufferTessellationWireframePSO()  const { return m_gBufferTessellationWireframePSO.Get(); }
-    ID3D12PipelineState* GetShadowPSO()     const { return m_shadowPSO.Get(); }
+    ID3D12PipelineState* GetOpaquePSO() const { return m_opaquePSO.Get(); }
+    ID3D12PipelineState* GetTransparentPSO() const { return m_transparentPSO.Get(); }
+    ID3D12PipelineState* GetGBufferPSO() const { return m_gBufferPSO.Get(); }
+    ID3D12RootSignature* GetDeferredRS() const { return m_deferredRootSig.Get(); }
+    ID3D12PipelineState* GetDeferredPSO()const { return m_deferredPSO.Get(); }
+    ID3D12PipelineState* GetAmbientPSO() const { return m_ambientPSO.Get(); }
+    ID3D12PipelineState* GetGBufferTessellationPSO() const { return m_gBufferTessellationPSO.Get(); }
+    ID3D12PipelineState* GetGBufferTessellationWireframePSO() const { return m_gBufferTessellationWireframePSO.Get(); }
+    ID3D12PipelineState* GetShadowPSO() const { return m_shadowPSO.Get(); }
+    ID3D12PipelineState* GetGBufferParticlesPSO() const { return m_gbufferParticlesPSO.Get(); }
+    ID3D12RootSignature* GetParticlesComputeRS() const { return m_particlesComputeRS.Get(); }
+    ID3D12PipelineState* GetParticlesUpdateCSO() const { return m_particlesUpdateCSO.Get(); }
+    ID3D12PipelineState* GetParticlesEmitCSO() const { return m_particlesEmitCSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -38,6 +42,10 @@ private:
     ComPtr<ID3D12PipelineState> m_gBufferTessellationPSO;
     ComPtr<ID3D12PipelineState> m_gBufferTessellationWireframePSO;
     ComPtr<ID3D12PipelineState> m_shadowPSO;
+    ComPtr<ID3D12PipelineState> m_gbufferParticlesPSO;
+    ComPtr<ID3D12RootSignature> m_particlesComputeRS;
+    ComPtr<ID3D12PipelineState> m_particlesUpdateCSO;
+    ComPtr<ID3D12PipelineState> m_particlesEmitCSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

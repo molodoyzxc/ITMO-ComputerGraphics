@@ -405,3 +405,52 @@ UINT DX12Framework::AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE type, UINT co
     m_nextSrvDescriptor += count;
     return start; 
 }
+
+void DX12Framework::CreateDefaultBuffer(
+    ID3D12GraphicsCommandList* cmdList,
+    void* initData,
+    UINT64 byteSize,
+    ComPtr<ID3D12Resource>& defaultBuffer,
+    ComPtr<ID3D12Resource>& uploadBuffer)
+{
+    auto device = GetDevice();
+
+    CD3DX12_HEAP_PROPERTIES defaultHeapProps(D3D12_HEAP_TYPE_DEFAULT);
+    CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(byteSize);
+
+    ThrowIfFailed(device->CreateCommittedResource(
+        &defaultHeapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &bufferDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&defaultBuffer)));
+
+    CD3DX12_HEAP_PROPERTIES uploadHeapProps(D3D12_HEAP_TYPE_UPLOAD);
+    ThrowIfFailed(device->CreateCommittedResource(
+        &uploadHeapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &bufferDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&uploadBuffer)));
+
+    D3D12_SUBRESOURCE_DATA subResourceData = {};
+    subResourceData.pData = initData;
+    subResourceData.RowPitch = byteSize;
+    subResourceData.SlicePitch = subResourceData.RowPitch;
+
+    UpdateSubresources<1>(
+        cmdList,
+        defaultBuffer.Get(),
+        uploadBuffer.Get(),
+        0, 0, 1,
+        &subResourceData);
+
+    CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+        defaultBuffer.Get(),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_GENERIC_READ);
+
+    cmdList->ResourceBarrier(1, &barrier);
+}

@@ -13,6 +13,7 @@
 #include "Timer.h"
 #include "ShadowMap.h"
 #include <array>
+#include "ParticleSystem.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -62,9 +63,9 @@ private:
     float m_pitch = 0.f;
     XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
     float m_near = 0.1f;
-    float m_far = 50000.0f;
+    float m_far = 500.0f;
 
-    float cameraSpeed = 3.0f;
+    float cameraSpeed = 1.0f;
     float acceleration = 3.0f;
     float deceleration = 0.1f;
     float rotationSpeed = 0.02f;
@@ -79,6 +80,7 @@ private:
     float m_fakeCameraZ = 0.0f;
 
     float m_currentFPS = 0.0f;
+    float dt;
 
     XMFLOAT3 direction = {-1.0f, -2.0f, -1.0f};
     static constexpr UINT CSM_CASCADES = 4;
@@ -86,6 +88,8 @@ private:
     float m_cascadeSplits[CSM_CASCADES];
     std::array<std::vector<SceneObject*>, CSM_CASCADES> m_shadowCasters;
     std::array<float, CSM_CASCADES> m_biasPerCascade{};
+
+    std::unique_ptr<ParticleSystem> m_particles;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
