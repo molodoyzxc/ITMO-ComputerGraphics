@@ -11,7 +11,8 @@ using namespace DirectX;
 
 using Microsoft::WRL::ComPtr;
 
-struct ParticleCPU {
+struct ParticleCPU 
+{
     float pos[3];
     float vel[3];
     float age;
@@ -19,7 +20,8 @@ struct ParticleCPU {
     float size;
 };
 
-class ParticleSystem {
+class ParticleSystem 
+{
 public:
     ParticleSystem(DX12Framework* fw, Pipeline* pipe);
     ~ParticleSystem() = default;
@@ -28,7 +30,8 @@ public:
     void Simulate(ID3D12GraphicsCommandList* cmd, float dt);
     void DrawGBuffer(ID3D12GraphicsCommandList* cmd);
 
-    void UpdateViewProj(const XMMATRIX& viewProj) {
+    void UpdateViewProj(const XMMATRIX& viewProj) 
+    {
         if (!m_objectCB) return;
         uint8_t* p = nullptr; CD3DX12_RANGE r(0, 0);
         if (SUCCEEDED(m_objectCB->Map(0, &r, reinterpret_cast<void**>(&p)))) {

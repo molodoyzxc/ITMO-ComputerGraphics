@@ -107,13 +107,13 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            //"Assets\\SponzaCrytek\\sponza.obj", 
-            "Assets\\Test2\\test.obj", 
+            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\Test2\\test.obj", 
         },
         { 0.0f, }
     );
 
-    m_objectScale = 1.0f;
+    m_objectScale = 0.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -225,7 +225,8 @@ void RenderingSystem::CreateConstantBuffers()
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_constantBuffer)));
-        CD3DX12_RANGE rr(0, 0); m_constantBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pCbData));
+        CD3DX12_RANGE rr(0, 0);
+        m_constantBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pCbData));
     }
 
     {
@@ -235,7 +236,8 @@ void RenderingSystem::CreateConstantBuffers()
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_lightBuffer)));
-        CD3DX12_RANGE rr(0, 0); m_lightBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pLightData));
+        CD3DX12_RANGE rr(0, 0);
+        m_lightBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pLightData));
     }
 
     {
@@ -244,7 +246,8 @@ void RenderingSystem::CreateConstantBuffers()
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_ambientBuffer)));
-        CD3DX12_RANGE rr(0, 0); m_ambientBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pAmbientData));
+        CD3DX12_RANGE rr(0, 0);
+        m_ambientBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pAmbientData));
     }
 
     {
@@ -254,7 +257,8 @@ void RenderingSystem::CreateConstantBuffers()
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_materialBuffer)));
-        CD3DX12_RANGE rr(0, 0); m_materialBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pMaterialData));
+        CD3DX12_RANGE rr(0, 0);
+        m_materialBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pMaterialData));
     }
 
     {
@@ -263,7 +267,8 @@ void RenderingSystem::CreateConstantBuffers()
         ThrowIfFailed(device->CreateCommittedResource(
             &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_tessBuffer)));
-        CD3DX12_RANGE rr(0, 0); m_tessBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pTessCbData));
+        CD3DX12_RANGE rr(0, 0);
+        m_tessBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pTessCbData));
     }
 
     {
@@ -278,6 +283,18 @@ void RenderingSystem::CreateConstantBuffers()
         m_shadowBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pShadowCbData));
     }
 
+    {
+        const UINT totalSize = Align256(sizeof(float) * 16);
+        auto* device = m_framework->GetDevice();
+        CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+        auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_postBuffer)
+        ));
+        CD3DX12_RANGE rr(0, 0);
+        m_postBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pPostData));
+    }
 }
 
 void RenderingSystem::Initialize()
@@ -313,6 +330,57 @@ void RenderingSystem::Initialize()
 
     LoadErrorTextures();
     LoadTextures();
+
+    {
+        auto* device = m_framework->GetDevice();
+        const UINT width = static_cast<UINT>(m_framework->GetWidth());
+        const UINT height = static_cast<UINT>(m_framework->GetHeight());
+
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        CD3DX12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Tex2D(
+            DXGI_FORMAT_R16G16B16A16_FLOAT, width, height, 1, 1, 1, 0,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
+        );
+        D3D12_CLEAR_VALUE cv{}; cv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        cv.Color[0] = cv.Color[1] = cv.Color[2] = 0.0f; cv.Color[3] = 0.0f;
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            &cv, IID_PPV_ARGS(&m_lightAccum)
+        ));
+
+        auto* rtvHeap = m_framework->GetRtvHeap();
+        const auto rtvHeapDesc = rtvHeap->GetDesc();
+        const UINT rtvLastIndex = rtvHeapDesc.NumDescriptors - 1;
+
+        m_lightAccumRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+            rtvHeap->GetCPUDescriptorHandleForHeapStart(),
+            rtvLastIndex, m_framework->GetRtvDescriptorSize());
+
+        D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
+        rtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        m_framework->GetDevice()->CreateRenderTargetView(m_lightAccum.Get(), &rtvDesc, m_lightAccumRTV);
+
+        m_lightAccumSrvIndex = m_framework->AllocateSrvDescriptor();
+        auto srvCPU = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+            m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart(),
+            m_lightAccumSrvIndex, m_framework->GetSrvDescriptorSize()
+        );
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+        device->CreateShaderResourceView(m_lightAccum.Get(), &srvDesc, srvCPU);
+
+        m_lightAccumSRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(
+            m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
+            m_lightAccumSrvIndex, m_framework->GetSrvDescriptorSize()
+        );
+    }
+
     CreateConstantBuffers();
 
     m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
@@ -450,6 +518,21 @@ void RenderingSystem::UpdateUI()
 
         ImGui::End();
     }
+
+    {
+        ImGui::Begin("Post");
+
+        ImGui::SliderFloat("Exposure", &postExposure, 0.1f, 4.0f);
+        ImGui::InputFloat("Gamma", &postGamma, 0.1f);
+        ImGui::SliderFloat("Vignette strength", &postVignetteStrength, 0.0f, 1.0f);
+        ImGui::SliderFloat("Vignette power", &postVignettePower, 1.0f, 6.0f);
+        ImGui::SliderFloat2("Vignette center", &postVignetteCenter.x, 0.0f, 1.0f);
+        ImGui::RadioButton("Clamp", &postTonemap, 0); ImGui::SameLine();
+        ImGui::RadioButton("Reinhard", &postTonemap, 1); ImGui::SameLine();
+        ImGui::RadioButton("ACES", &postTonemap, 2);
+
+        ImGui::End();
+    }
 }
 
 void RenderingSystem::BuildViewProj()
@@ -580,6 +663,28 @@ void RenderingSystem::UpdateLightCB()
     memcpy(m_pAmbientData, &amb, sizeof(amb));
 }
 
+void RenderingSystem::UpdatePostCB()
+{
+    struct PostCBData 
+    {
+        float Exposure, Gamma, VignetteStrength, VignettePower;
+        float VignetteCenterX, VignetteCenterY, InvW, InvH;
+        int   Tonemap; int pad[3];
+    } d{};
+
+    d.Exposure = postExposure;
+    d.Gamma = postGamma;
+    d.VignetteStrength = postVignetteStrength;
+    d.VignettePower = postVignettePower;
+    d.VignetteCenterX = postVignetteCenter.x;
+    d.VignetteCenterY = postVignetteCenter.y;
+    d.InvW = 1.0f / m_framework->GetWidth();
+    d.InvH = 1.0f / m_framework->GetHeight();
+    d.Tonemap = postTonemap;
+
+    memcpy(m_pPostData, &d, sizeof(d));
+}
+
 void RenderingSystem::SetCommonHeaps()
 {
     ID3D12DescriptorHeap* heaps[] = {
@@ -650,10 +755,18 @@ void RenderingSystem::GeometryPass()
 
 void RenderingSystem::DeferredPass()
 {
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();
-    cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-    const float clearBB[4] = { 0,0,0,1 };
-    cmd->ClearRenderTargetView(rtv, clearBB, 0, nullptr);
+    {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_lightAccum.Get(),
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_RENDER_TARGET
+        );
+        cmd->ResourceBarrier(1, &barrier);
+    }
+
+    cmd->OMSetRenderTargets(1, &m_lightAccumRTV, FALSE, nullptr);
+    const float clearHDR[4] = { 0,0,0,0 };
+    cmd->ClearRenderTargetView(m_lightAccumRTV, clearHDR, 0, nullptr);
     m_framework->SetViewportAndScissors();
 
     cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
@@ -667,20 +780,46 @@ void RenderingSystem::DeferredPass()
     cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
     cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->DrawInstanced(6, 1, 0, 0);
+    cmd->DrawInstanced(3, 1, 0, 0);
 
     cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
-
     UpdateLightCB();
-
     const UINT lightCBSize = Align256(sizeof(LightCB));
     for (size_t i = 0; i < lights.size(); ++i) {
         D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * lightCBSize;
         cmd->SetGraphicsRootConstantBufferView(1, cbAddr);
         cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        cmd->DrawInstanced(6, 1, 0, 0);
+        cmd->DrawInstanced(3, 1, 0, 0);
     }
+
+    {
+        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_lightAccum.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        );
+        cmd->ResourceBarrier(1, &barrier);
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();
+    cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+    const float clearBB[4] = { 0,0,0,1 };
+    cmd->ClearRenderTargetView(rtv, clearBB, 0, nullptr);
+    m_framework->SetViewportAndScissors();
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
+    SetCommonHeaps();
+
+    cmd->SetGraphicsRootDescriptorTable(0, m_lightAccumSRV);
+
+    UpdatePostCB();
+    cmd->SetPipelineState(m_pipeline.GetPostPSO());
+    cmd->SetGraphicsRootConstantBufferView(1, m_postBuffer->GetGPUVirtualAddress());
+
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
 }
+
 
 void RenderingSystem::BuildLightViewProjCSM()
 {

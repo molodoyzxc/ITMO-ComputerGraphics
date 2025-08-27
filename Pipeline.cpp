@@ -50,6 +50,9 @@ void Pipeline::Init()
     Compile(L"ParticlesCS.hlsl", L"CS_Update", L"cs_6_0", csUpdate);
     Compile(L"ParticlesCS.hlsl", L"CS_Emit", L"cs_6_0", csEmit);
 
+    ComPtr<IDxcBlob> psPost;
+    Compile(L"Shaders.hlsl", L"PS_Post", L"ps_6_0", psPost);
+
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -220,7 +223,7 @@ void Pipeline::Init()
     defDesc.SampleMask = UINT_MAX;
     defDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     defDesc.NumRenderTargets = 1;
-    defDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    defDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;;
     defDesc.SampleDesc.Count = 1;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &defDesc, IID_PPV_ARGS(&m_deferredPSO)
@@ -248,7 +251,7 @@ void Pipeline::Init()
     ambientDesc.PS = { psAmbientBlob->GetBufferPointer(), psAmbientBlob->GetBufferSize() };
 
     ambientDesc.NumRenderTargets = 1;
-    ambientDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    ambientDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;;
 
     for (int i = 1; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
         ambientDesc.RTVFormats[i] = DXGI_FORMAT_UNKNOWN;
@@ -319,6 +322,23 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateComputePipelineState(&csd, IID_PPV_ARGS(&m_particlesUpdateCSO)));
     csd.CS = { csEmit->GetBufferPointer(), csEmit->GetBufferSize() };
     ThrowIfFailed(m_framework->GetDevice()->CreateComputePipelineState(&csd, IID_PPV_ARGS(&m_particlesEmitCSO)));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC postDesc = {};
+    postDesc.InputLayout = { nullptr, 0 };
+    postDesc.pRootSignature = m_deferredRootSig.Get();
+    postDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+    postDesc.PS = { psPost->GetBufferPointer(), psPost->GetBufferSize() };
+    postDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    postDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    postDesc.DepthStencilState.DepthEnable = FALSE;
+    postDesc.SampleMask = UINT_MAX;
+    postDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    postDesc.NumRenderTargets = 1;
+    postDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    postDesc.SampleDesc.Count = 1;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &postDesc, IID_PPV_ARGS(&m_postPSO)
+    ));
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)

@@ -192,7 +192,7 @@ void DX12Framework::CreateDescriptorHeaps()
 {
     // RTV куча
     D3D12_DESCRIPTOR_HEAP_DESC rtvDesc = {};
-    rtvDesc.NumDescriptors = FrameCount + 3;
+    rtvDesc.NumDescriptors = FrameCount + 4;
     rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     ThrowIfFailed(m_device->CreateDescriptorHeap(
         &rtvDesc, IID_PPV_ARGS(&m_rtvHeap)));

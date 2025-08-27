@@ -47,6 +47,7 @@ private:
     ComPtr<ID3D12Resource> m_tessBuffer;
     ComPtr<ID3D12Resource> m_materialBuffer;
     ComPtr<ID3D12Resource> m_shadowBuffer;
+    ComPtr<ID3D12Resource> m_postBuffer;
 
     uint8_t* m_pCbData = nullptr;
     uint8_t* m_pLightData = nullptr;
@@ -54,6 +55,7 @@ private:
     uint8_t* m_pTessCbData = nullptr;
     uint8_t* m_pMaterialData = nullptr;
     uint8_t* m_pShadowCbData = nullptr;
+    uint8_t* m_pPostData = nullptr;
 
     XMMATRIX view, proj, viewProj;
     ID3D12GraphicsCommandList* cmd;
@@ -63,7 +65,7 @@ private:
     float m_pitch = 0.f;
     XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
     float m_near = 0.1f;
-    float m_far = 500.0f;
+    float m_far = 5000.0f;
 
     float cameraSpeed = 1.0f;
     float acceleration = 3.0f;
@@ -91,6 +93,17 @@ private:
 
     std::unique_ptr<ParticleSystem> m_particles;
 
+    ComPtr<ID3D12Resource> m_lightAccum;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_lightAccumRTV{};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_lightAccumSRV{};
+    UINT m_lightAccumSrvIndex = 0;
+    float postExposure = 1.0f;
+    float postGamma = 2.2f;
+    float postVignetteStrength = 0.20f;
+    float postVignettePower = 2.0f;
+    DirectX::XMFLOAT2 postVignetteCenter{ 0.5f, 0.5f };
+    int postTonemap = 2;
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
@@ -110,6 +123,7 @@ private:
     void ExtractVisibleObjects();
     void UpdatePerObjectCBs();
     void UpdateLightCB();
+    void UpdatePostCB();
     void GeometryPass();
     void DeferredPass();
     void SetCommonHeaps();

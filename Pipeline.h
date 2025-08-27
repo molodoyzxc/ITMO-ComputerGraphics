@@ -28,6 +28,7 @@ public:
     ID3D12RootSignature* GetParticlesComputeRS() const { return m_particlesComputeRS.Get(); }
     ID3D12PipelineState* GetParticlesUpdateCSO() const { return m_particlesUpdateCSO.Get(); }
     ID3D12PipelineState* GetParticlesEmitCSO() const { return m_particlesEmitCSO.Get(); }
+    ID3D12PipelineState* GetPostPSO() const { return m_postPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -46,6 +47,7 @@ private:
     ComPtr<ID3D12RootSignature> m_particlesComputeRS;
     ComPtr<ID3D12PipelineState> m_particlesUpdateCSO;
     ComPtr<ID3D12PipelineState> m_particlesEmitCSO;
+    ComPtr<ID3D12PipelineState> m_postPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

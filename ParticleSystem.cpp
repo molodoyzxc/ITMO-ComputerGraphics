@@ -271,7 +271,7 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
         } cb{};
         cb.dt = dt;
         cb.accel[0] = 0.0f;
-        cb.accel[1] = -9.8f;
+        cb.accel[1] = 0.1f;
         cb.accel[2] = 0.0f;
         cb.spawnCount = 0;
         cb.emitterPos[0] = cb.emitterPos[1] = cb.emitterPos[2] = 0.0f;
