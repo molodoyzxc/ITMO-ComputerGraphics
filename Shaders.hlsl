@@ -19,11 +19,13 @@ cbuffer LightingCB : register(b1)
 
     row_major float4x4 InvViewProj;
     float4 ScreenSize;
-    
+
     row_major float4x4 LightViewProj[4];
     float4 CascadeSplits;
     row_major float4x4 View;
     float4 ShadowParams;
+
+    float4 CameraPos;
 };
 
 cbuffer AmbientCB : register(b2)
@@ -37,10 +39,22 @@ cbuffer MaterialCB : register(b4)
     uint diffuseIdx;
     uint normalIdx;
     uint dispIdx;
+
     uint roughIdx;
     uint metalIdx;
     uint aoIdx;
-    float pad[1];
+    uint hasDiffuseMap;
+
+    float4 baseColor; // Kd
+    
+    float roughnessValue;
+    float metallicValue;
+    float aoValue;
+    uint hasRoughMap;
+
+    uint hasMetalMap;
+    uint hasAOMap;
+    float _padM;
 };
 
 cbuffer PostCB : register(b1) 
@@ -66,6 +80,10 @@ Texture2DArray<float> gShadowMap : register(t4);
 
 SamplerState samLinear : register(s0);
 SamplerComparisonState samShadow : register(s1);
+
+TextureCube<float3> gIrradiance : register(t5);
+TextureCube<float3> gPrefEnv : register(t6);
+Texture2D<float2> gBRDFLUT : register(t7);
 
 struct VSInput
 {
@@ -216,11 +234,12 @@ GBufferOut PS_GBuffer(VSOutput IN)
 {
     GBufferOut OUT;
     float2 uv = IN.uv;
-    float4 albedo = gTextures[diffuseIdx].Sample(samLinear, uv);
+    
+    float4 texAlbedo = (hasDiffuseMap != 0) ? gTextures[diffuseIdx].Sample(samLinear, uv) : float4(1, 1, 1, 1);
+    float4 albedo = float4(baseColor.rgb, 1.0) * texAlbedo;
     clip(albedo.a - 0.1);
-
     OUT.Albedo = albedo;
-
+    
     float3 nMap = gTextures[normalIdx].Sample(samLinear, uv).xyz * 2.0 - 1.0;
     nMap.y = -nMap.y;
 
@@ -229,14 +248,16 @@ GBufferOut PS_GBuffer(VSOutput IN)
     float3 B = cross(N, T) * IN.handed;
     float3 mapped = normalize(nMap.x * T + nMap.y * B + nMap.z * N);
     float3 worldN = lerp(N, mapped, useNormalMap);
-
     OUT.Normal = float4(worldN * 0.5 + 0.5, 0);
-    OUT.Params = float4(gTextures[roughIdx].Sample(samLinear, uv).r,
-    gTextures[metalIdx].Sample(samLinear, uv).r,
-    gTextures[aoIdx].Sample(samLinear, uv).r,
-    0);
+    
+    float rough = (hasRoughMap != 0) ? gTextures[roughIdx].Sample(samLinear, uv).r : roughnessValue;
+    float metal = (hasMetalMap != 0) ? gTextures[metalIdx].Sample(samLinear, uv).r : metallicValue;
+    float ao = (hasAOMap != 0) ? gTextures[aoIdx].Sample(samLinear, uv).r : aoValue;
+
+    OUT.Params = float4(saturate(rough), saturate(metal), saturate(ao), 0.0);
     return OUT;
 }
+
 
 struct VSFwdOut
 {
@@ -323,77 +344,158 @@ float4 PS_Post(VSQOut IN) : SV_TARGET
     return float4(srgb * vig, 1.0);
 }
 
+static const float PI = 3.14159265359;
+
+float DistributionGGX(float3 N, float3 H, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH = saturate(dot(N, H));
+    float NdotH2 = NdotH * NdotH;
+
+    float denom = NdotH2 * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denom * denom, 1e-7);
+}
+
+float GeometrySchlickGGX(float NdotX, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return NdotX / max(NdotX * (1.0 - k) + k, 1e-7);
+}
+
+float GeometrySmith(float3 N, float3 V, float3 L, float roughness)
+{
+    float NdotV = saturate(dot(N, V));
+    float NdotL = saturate(dot(N, L));
+    float ggx1 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx2 = GeometrySchlickGGX(NdotL, roughness);
+    return ggx1 * ggx2;
+}
+
+float3 FresnelSchlick(float cosTheta, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
 float4 PS_Ambient(VSQOut IN) : SV_TARGET
 {
     float4 albedo = gAlbedoTex.Sample(samLinear, IN.uv);
     if (albedo.a < 0.1)
         discard;
-    return float4(albedo.rgb * AmbientColor.rgb, 1.0);
+
+    float ao = gParamTex.Sample(samLinear, IN.uv).b;
+    float3 ambient = albedo.rgb * AmbientColor.rgb * ao;
+    return float4(ambient, 1.0);
 }
 
 float4 PS_Lighting(VSQOut IN) : SV_TARGET
 {
     float2 uv = IN.uv;
-    float depth = gDepthTex.SampleLevel(samLinear, uv, 0).r;
-    float2 ndc;
-    ndc.x = 2.0 * uv.x - 1.0;
-    ndc.y = 1.0 - 2.0 * uv.y;
     
+    float depth = gDepthTex.SampleLevel(samLinear, uv, 0).r;
+    float2 ndc = float2(2.0 * uv.x - 1.0, 1.0 - 2.0 * uv.y);
     float4 clipPos = float4(ndc.x, ndc.y, depth, 1.0);
     float4 worldH = mul(clipPos, InvViewProj);
     float3 worldPos = worldH.xyz / worldH.w;
-    float4 albedo = gAlbedoTex.Sample(samLinear, uv);
-    float shadow;
-    if (albedo.a < 0.1)
-    {
+    
+    float4 albedoTex = gAlbedoTex.Sample(samLinear, uv);
+    if (albedoTex.a < 0.1)
         discard;
-    }
-    float3 normalSample = gNormalTex.Sample(samLinear, uv).xyz;
-    float3 worldNormal = normalize(normalSample * 2.0 - 1.0);
-    float3 result = float3(0, 0, 0);
+
+    float3 N = normalize(gNormalTex.Sample(samLinear, uv).xyz * 2.0 - 1.0);
+    float3 params = gParamTex.Sample(samLinear, uv).rgb;
+    float roughness = saturate(params.r);
+    float metallic = saturate(params.g);
+    float ao = saturate(params.b);
+
+    float3 V = normalize(CameraPos.xyz - worldPos);
+    float3 baseColor = saturate(albedoTex.rgb);
+    
+    float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
+
+    float3 radiance = 0.0.xxx;
+    float NdotL = 0.0;
+    float shadow = 1.0;
+
     if (LightType == 0)  // Directional
     {
-        float3 Ldir = normalize(-LightDir.xyz);
-        float nL = max(dot(worldNormal, Ldir), 0.0);
+        float3 L = normalize(-LightDir.xyz);
+        float3 H = normalize(V + L);
+        NdotL = saturate(dot(N, L));
+
         uint cascadeIdx = ChooseCascade(worldPos);
         shadow = PCF_Shadow(worldPos, cascadeIdx);
-        //uint c = ChooseCascade(worldPos);
-        //float3 debugC = (c == 0) ? float3(1, 0, 0) : (c == 1) ? float3(0, 1, 0) : (c == 2) ? float3(0, 0, 1) : float3(1, 1, 0);
-        //result += debugC * 0.5;
-        result += albedo.rgb * LightColor.rgb * nL * shadow;
+
+        float D = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        float3 F = FresnelSchlick(saturate(dot(H, V)), F0);
+
+        float3 kS = F;
+        float3 kD = (1.0 - kS) * (1.0 - metallic);
+
+        float denom = max(4.0 * saturate(dot(N, V)) * NdotL, 1e-7);
+        float3 spec = (D * G * F) / denom;
+
+        radiance = LightColor.rgb * (kD * baseColor / PI + spec) * NdotL * shadow;
     }
     else if (LightType == 1)  // Point
     {
         float3 toLight = LightPosRange.xyz - worldPos;
         float dist = length(toLight);
-        
         if (dist < LightPosRange.w && dist > 0.01)
         {
-            float3 Ldir = normalize(toLight);
-            float nL = max(dot(worldNormal, Ldir), 0.0);
+            float3 L = toLight / dist;
+            float3 H = normalize(V + L);
+            NdotL = saturate(dot(N, L));
+            
             float att = saturate(1.0 - (dist / LightPosRange.w));
-            att = att * att;
-            result += albedo.rgb * LightColor.rgb * nL * att;
+            att *= att;
+
+            float D = DistributionGGX(N, H, roughness);
+            float G = GeometrySmith(N, V, L, roughness);
+            float3 F = FresnelSchlick(saturate(dot(H, V)), F0);
+
+            float3 kS = F;
+            float3 kD = (1.0 - kS) * (1.0 - metallic);
+
+            float denom = max(4.0 * saturate(dot(N, V)) * NdotL, 1e-7);
+            float3 spec = (D * G * F) / denom;
+
+            radiance = LightColor.rgb * (kD * baseColor / PI + spec) * NdotL * att;
         }
     }
     else if (LightType == 2)  // Spot
     {
         float3 toLight = LightPosRange.xyz - worldPos;
         float dist = length(toLight);
-        
         if (dist < LightPosRange.w && dist > 0.01)
         {
-            float3 Ldir = normalize(toLight);
-            float nL = max(dot(worldNormal, Ldir), 0.0);
+            float3 L = toLight / dist;
+            float3 H = normalize(V + L);
+            NdotL = saturate(dot(N, L));
+
             float distAtt = saturate(1.0 - (dist / LightPosRange.w));
-            distAtt = distAtt * distAtt;
+            distAtt *= distAtt;
+
             float3 coneAxis = normalize(SpotDirInnerCos.xyz);
-            float3 lightToFrag = -Ldir;
+            float3 lightToFrag = -L;
             float cosA = dot(lightToFrag, coneAxis);
             float spotAtt = smoothstep(SpotOuterPad.x, SpotDirInnerCos.w, cosA);
-            result += albedo.rgb * LightColor.rgb * nL * distAtt * spotAtt;
+
+            float D = DistributionGGX(N, H, roughness);
+            float G = GeometrySmith(N, V, L, roughness);
+            float3 F = FresnelSchlick(saturate(dot(H, V)), F0);
+
+            float3 kS = F;
+            float3 kD = (1.0 - kS) * (1.0 - metallic);
+
+            float denom = max(4.0 * saturate(dot(N, V)) * NdotL, 1e-7);
+            float3 spec = (D * G * F) / denom;
+
+            radiance = LightColor.rgb * (kD * baseColor / PI + spec) * NdotL * distAtt * spotAtt;
         }
     }
 
-    return float4(result, 1.0);
+    return float4(radiance, 1.0);
 }

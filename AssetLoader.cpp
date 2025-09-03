@@ -118,7 +118,6 @@ Mesh AssetLoader::LoadGeometry(const std::string& objPath)
     return mesh;
 }
 
-
 Material AssetLoader::LoadMaterial(const std::string& mtlFile, const std::string& materialName)
 {
     std::ifstream in(mtlFile);
@@ -251,8 +250,9 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
     }
 
     size_t M = materials.size();
-    std::vector<Mesh> meshPerMat(M);
-    std::vector<std::unordered_map<uint64_t, uint32_t>> uniqueVertMaps(M);
+    size_t N = M + 1;
+    std::vector<Mesh> meshPerMat(N);
+    std::vector<std::unordered_map<uint64_t, uint32_t>> uniqueVertMaps(N);
 
     for (auto& shape : shapes) {
         auto& fvCounts = shape.mesh.num_face_vertices;
@@ -262,7 +262,7 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         size_t indexOffset = 0;
         for (size_t f = 0; f < fvCounts.size(); ++f) {
             int rawMatId = (f < matIds.size() ? matIds[f] : -1);
-            int mid = (rawMatId >= 0 && rawMatId < (int)M) ? rawMatId : 0;
+            int mid = (rawMatId >= 0 && rawMatId < (int)M) ? rawMatId : (int)M;
 
             Mesh& mesh = meshPerMat[mid];
             auto& umap = uniqueVertMaps[mid];
@@ -366,9 +366,10 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
     }
 
     std::vector<SceneObject> sceneObjects;
-    sceneObjects.reserve(M);
+    sceneObjects.reserve(N);
 
-    for (size_t i = 0; i < M; ++i) {
+    for (size_t i = 0; i < N; ++i) 
+    {
         if (meshPerMat[i].indices.empty())
             continue;
 
@@ -379,27 +380,37 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
             { 1.0f,1.0f,1.0f }
         );
 
-        const auto& m = materials[i];
-        obj.material.ambient = { m.ambient[0],   m.ambient[1],   m.ambient[2] };
-        obj.material.diffuse = { m.diffuse[0],   m.diffuse[1],   m.diffuse[2] };
-        obj.material.specular = { m.specular[0],  m.specular[1],  m.specular[2] };
-        obj.material.shininess = m.shininess;
-        obj.material.diffuseTexPath = m.diffuse_texname;
-        obj.material.normalTexPath =
-            !m.bump_texname.empty() ? m.bump_texname
-            : !m.normal_texname.empty() ? m.normal_texname
-            : "";
-
-        obj.material.displacementTexPath =
-            !m.displacement_texname.empty() ? m.displacement_texname
-            : !m.displacement_texname.empty() ? m.displacement_texname
-            : "";
-
-        obj.material.roughnessTexPath = m.roughness_texname;
-        obj.material.metallicTexPath = m.metallic_texname;
-        obj.material.aoTexPath = !m.ambient_texname.empty()
-            ? m.ambient_texname
-            : m.ambient_texname;
+        if (i < M) 
+        {
+            const auto& m = materials[i];
+            obj.material.ambient = { m.ambient[0],  m.ambient[1],  m.ambient[2] };
+            obj.material.diffuse = { m.diffuse[0],  m.diffuse[1],  m.diffuse[2] };
+            obj.material.specular = { m.specular[0], m.specular[1], m.specular[2] };
+            obj.material.roughness = m.roughness;
+            obj.material.metallic = m.metallic;
+            obj.material.ao = 1.0f;
+            obj.material.shininess = m.shininess;
+            obj.material.diffuseTexPath = m.diffuse_texname;
+            obj.material.normalTexPath = !m.bump_texname.empty() ? m.bump_texname
+                : !m.normal_texname.empty() ? m.normal_texname : "";
+            obj.material.displacementTexPath = m.displacement_texname;
+            obj.material.roughnessTexPath = m.roughness_texname;
+            obj.material.metallicTexPath = m.metallic_texname;
+            obj.material.aoTexPath = m.ambient_texname;
+        }
+        else 
+        {
+            obj.material.ambient = { 0.0f, 0.0f, 0.0f };
+            obj.material.diffuse = { 1.0f, 1.0f, 1.0f };
+            obj.material.specular = { 0.0f, 0.0f, 0.0f };
+            obj.material.shininess = 1.0f;
+            obj.material.diffuseTexPath.clear();
+            obj.material.normalTexPath.clear();
+            obj.material.displacementTexPath.clear();
+            obj.material.roughnessTexPath.clear();
+            obj.material.metallicTexPath.clear();
+            obj.material.aoTexPath.clear();
+        }
 
         sceneObjects.push_back(std::move(obj));
     }

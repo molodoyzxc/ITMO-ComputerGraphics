@@ -12,7 +12,8 @@ using namespace DirectX;
 
 struct CB { XMFLOAT4X4 World, ViewProj; };
 
-struct LightCB {
+struct LightCB 
+{
     int Type; int pad0[3];
     XMFLOAT4 LightDir;
     XMFLOAT4 LightColor;
@@ -22,9 +23,10 @@ struct LightCB {
     XMFLOAT4X4 InvViewProj;
     XMFLOAT4 ScreenSize;
     XMFLOAT4X4 LightViewProj[4];
-    XMFLOAT4   CascadeSplits;
+    XMFLOAT4 CascadeSplits;
     XMFLOAT4X4 View;
-    XMFLOAT4   ShadowParams;
+    XMFLOAT4 ShadowParams;
+    XMFLOAT4 CameraPos;
 };
 
 struct AmbientCB { XMFLOAT4 AmbientColor; };
@@ -35,15 +37,28 @@ struct TessCB {
     float minTess; float maxTess;
 };
 
-struct MaterialCB {
-    float useNormalMap; // 0 – geometry, 1 – normal map
+struct MaterialCB
+{
+    float useNormalMap;
     UINT diffuseIdx;
     UINT normalIdx;
     UINT dispIdx;
+
     UINT roughIdx;
     UINT metalIdx;
     UINT aoIdx;
-    float pad[1];
+    UINT hasDiffuseMap;
+
+    XMFLOAT4 baseColor;
+
+    float roughnessValue;
+    float metallicValue;
+    float aoValue;
+    UINT hasRoughMap;
+
+    UINT hasMetalMap;
+    UINT hasAOMap;
+    float _padM;
 };
 
 struct ErrorTextures {
@@ -107,13 +122,13 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
-            //"Assets\\Test2\\test.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
+            "Assets\\TestPBR\\TestPBR.obj", 
         },
         { 0.0f, }
     );
 
-    m_objectScale = 0.1f;
+    m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -175,8 +190,8 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    //std::filesystem::path sceneFolder = L"Assets\\Test2";
+    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -384,7 +399,7 @@ void RenderingSystem::Initialize()
     CreateConstantBuffers();
 
     m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
-    m_particles->Initialize(100000, 20000);
+    m_particles->Initialize(1000, 1);
 }
 
 void RenderingSystem::Update(float)
@@ -435,7 +450,7 @@ void RenderingSystem::Render()
     m_particles->Simulate(cmd, dt);
 
     m_gbuffer->Bind(cmd);
-    const float clearG[4] = { 0.2f, 0.2f, 1.0f, 1.0f };
+    const float clearG[4] = { 0.2f, 0.2f, 1.0f, 0.0f };
     m_gbuffer->Clear(cmd, clearG);
     m_framework->SetViewportAndScissors();
 
@@ -618,6 +633,21 @@ void RenderingSystem::UpdatePerObjectCBs()
         mcb.metalIdx = obj->texIdx[4];
         mcb.aoIdx = obj->texIdx[5];
 
+        mcb.hasDiffuseMap = obj->material.diffuseTexPath.empty() ? 0u : 1u;
+
+        mcb.hasRoughMap = obj->material.roughnessTexPath.empty() ? 0u : 1u;
+        mcb.hasMetalMap = obj->material.metallicTexPath.empty() ? 0u : 1u;
+        mcb.hasAOMap = obj->material.aoTexPath.empty() ? 0u : 1u;
+
+        mcb.roughnessValue = obj->material.roughness;
+        mcb.metallicValue = obj->material.metallic;
+        mcb.aoValue = obj->material.ao;
+
+        mcb.baseColor = { obj->material.diffuse.x,
+                          obj->material.diffuse.y,
+                          obj->material.diffuse.z,
+                          1.0f };
+
         memcpy(m_pCbData + static_cast<UINT>(i) * cbSize, &cb, sizeof(cb));
         memcpy(m_pMaterialData + static_cast<UINT>(i) * materialSize, &mcb, sizeof(mcb));
     }
@@ -639,27 +669,20 @@ void RenderingSystem::UpdateLightCB()
         cb.LightPosRange = { L.position.x, L.position.y, L.position.z, L.radius };
         cb.SpotDirInnerCos = { L.spotDirection.x, L.spotDirection.y, L.spotDirection.z, L.innerCone() };
         cb.SpotOuterPad = { L.outerCone(), 0, 0, 0 };
-        cb.ScreenSize = { static_cast<float>(m_framework->GetWidth()), static_cast<float>(m_framework->GetHeight()), 0, 0 };
-
-        for (UINT ci = 0; ci < CSM_CASCADES; ++ci)
-            cb.LightViewProj[ci] = m_lightViewProjCSM[ci];
-
-        cb.CascadeSplits = {
-            m_cascadeSplits[0],
-            m_cascadeSplits[1],
-            m_cascadeSplits[2],
-            (CSM_CASCADES > 3 ? m_cascadeSplits[3] : m_cascadeSplits[2])
-        };
-
+        cb.ScreenSize = { float(m_framework->GetWidth()), float(m_framework->GetHeight()), 0, 0 };
+        for (UINT ci = 0; ci < CSM_CASCADES; ++ci) cb.LightViewProj[ci] = m_lightViewProjCSM[ci];
+        cb.CascadeSplits = { m_cascadeSplits[0], m_cascadeSplits[1], m_cascadeSplits[2],
+                             (CSM_CASCADES > 3 ? m_cascadeSplits[3] : m_cascadeSplits[2]) };
         XMStoreFloat4x4(&cb.View, view);
-
         cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, (float)m_shadow->CascadeCount(), 0 };
 
-        memcpy(m_pLightData + static_cast<UINT>(i) * lightCBSize, &cb, sizeof(cb));
+        cb.CameraPos = { cameraPos.x, cameraPos.y, cameraPos.z, 0.0f };
+
+        memcpy(m_pLightData + UINT(i) * lightCBSize, &cb, sizeof(cb));
     }
 
     AmbientCB amb{};
-    amb.AmbientColor = { 0.2f, 0.2f, 0.2f, 0.0f };
+    amb.AmbientColor = { 0.1f, 0.1f, 0.1f, 0.0f };
     memcpy(m_pAmbientData, &amb, sizeof(amb));
 }
 
@@ -770,15 +793,15 @@ void RenderingSystem::DeferredPass()
     m_framework->SetViewportAndScissors();
 
     cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
+    cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
     SetCommonHeaps();
 
-    auto srvs = m_gbuffer->GetSRVs();
-    cmd->SetGraphicsRootDescriptorTable(0, srvs[0]);
-    cmd->SetGraphicsRootDescriptorTable(4, m_shadow->Srv());
-    cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
-
-    cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
+    cmd->SetGraphicsRootDescriptorTable(0, m_gbuffer->GetSRVs()[0]);
+    cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
+    cmd->SetGraphicsRootDescriptorTable(4, m_shadow->Srv());
+
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
 
@@ -819,7 +842,6 @@ void RenderingSystem::DeferredPass()
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
 }
-
 
 void RenderingSystem::BuildLightViewProjCSM()
 {
