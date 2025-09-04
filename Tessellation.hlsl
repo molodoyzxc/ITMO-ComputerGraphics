@@ -159,7 +159,6 @@ DSOutput DSMain(
     worldPos += worldNormal * height;
     
     float4 clipPos = mul(ViewProj, float4(worldPos, 1.0f));
-    clipPos.y *= -1.0f;
     
     o.posH = clipPos;
     o.normal = worldNormal;

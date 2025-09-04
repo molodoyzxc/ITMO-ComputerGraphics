@@ -122,13 +122,15 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
+            //"Assets\\Can\\Gas_can.obj", 
+            "Assets\\TV\\Television_01_4k.obj", 
         },
         { 0.0f, }
     );
 
-    m_objectScale = 0.1f;
+    m_objectScale = 100.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -190,8 +192,10 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    //std::filesystem::path sceneFolder = L"Assets\\Can";
+    std::filesystem::path sceneFolder = L"Assets\\TV";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -756,22 +760,29 @@ void RenderingSystem::GeometryPass()
         const float dist = XMVectorGetX(XMVector3Length(
             XMLoadFloat3(&fakeCamPos) - XMLoadFloat3(&obj->position)));
         int lod = static_cast<int>(obj->lodDistances.size()) - 1;
-        for (int j = 0; j + 1 < static_cast<int>(obj->lodDistances.size()); ++j) {
-            if (dist < obj->lodDistances[j + 1]) { lod = j; break; }
+        for (int j = 0; j + 1 < static_cast<int>(obj->lodDistances.size()); ++j) 
+        {
+            if (dist < obj->lodDistances[j + 1]) 
+            {
+                lod = j; break;
+            }
         }
 
-        if (!switchedToTransparent && obj->Color.w != 1.0f) {
+        if (!switchedToTransparent && obj->Color.w != 1.0f) 
+        {
             cmd->SetPipelineState(m_pipeline.GetTransparentPSO());
             switchedToTransparent = true;
         }
 
         const bool useTess = (obj->texIdx[2] != errorTextures.height);
-        if (useTess) {
+        if (useTess)
+        {
             cmd->SetPipelineState(m_wireframe ? m_pipeline.GetGBufferTessellationWireframePSO()
                 : m_pipeline.GetGBufferTessellationPSO());
             cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
         }
-        else {
+        else 
+        {
             cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
             cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         }

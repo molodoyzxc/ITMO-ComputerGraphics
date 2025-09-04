@@ -11,6 +11,7 @@
 #include <filesystem>
 #include "SceneObject.h"
 #include <vector>
+#include <algorithm>
 
 static std::wstring HrToMessageW(HRESULT hr) {
     LPWSTR buf = nullptr;
@@ -325,8 +326,8 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         .parent_path()
         .string();
 
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err,
-        objPath.c_str(), baseDir.c_str())) {
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, objPath.c_str(), baseDir.c_str())) 
+    {
         throw std::runtime_error("TinyObjLoader error: " + warn + err);
     }
 
@@ -335,20 +336,23 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
     std::vector<Mesh> meshPerMat(N);
     std::vector<std::unordered_map<uint64_t, uint32_t>> uniqueVertMaps(N);
 
-    for (auto& shape : shapes) {
+    for (auto& shape : shapes) 
+    {
         auto& fvCounts = shape.mesh.num_face_vertices;
         auto& matIds = shape.mesh.material_ids;
         auto& idxs = shape.mesh.indices;
 
         size_t indexOffset = 0;
-        for (size_t f = 0; f < fvCounts.size(); ++f) {
+        for (size_t f = 0; f < fvCounts.size(); ++f) 
+        {
             int rawMatId = (f < matIds.size() ? matIds[f] : -1);
             int mid = (rawMatId >= 0 && rawMatId < (int)M) ? rawMatId : (int)M;
 
             Mesh& mesh = meshPerMat[mid];
             auto& umap = uniqueVertMaps[mid];
 
-            for (size_t v = 0; v < fvCounts[f]; ++v) {
+            for (size_t v = 0; v < fvCounts[f]; ++v) 
+            {
                 const auto& idx = idxs[indexOffset + v];
                 uint64_t key = (uint64_t(idx.vertex_index + 1) << 42)
                     | (uint64_t(idx.texcoord_index + 1) << 21)
@@ -356,22 +360,28 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
 
                 uint32_t newIndex;
                 auto it = umap.find(key);
-                if (it == umap.end()) {
+                if (it == umap.end()) 
+                {
                     Vertex vert{};
-                    vert.Pos = {
+                    vert.Pos = 
+                    {
                         attrib.vertices[3 * idx.vertex_index + 0],
                         attrib.vertices[3 * idx.vertex_index + 1],
                         attrib.vertices[3 * idx.vertex_index + 2]
                     };
-                    if (idx.normal_index >= 0) {
-                        vert.Normal = {
+                    if (idx.normal_index >= 0) 
+                    {
+                        vert.Normal = 
+                        {
                             attrib.normals[3 * idx.normal_index + 0],
                             attrib.normals[3 * idx.normal_index + 1],
                             attrib.normals[3 * idx.normal_index + 2]
                         };
                     }
-                    if (idx.texcoord_index >= 0) {
-                        vert.uv = {
+                    if (idx.texcoord_index >= 0) 
+                    {
+                        vert.uv = 
+                        {
                             attrib.texcoords[2 * idx.texcoord_index + 0],
                             1.0f - attrib.texcoords[2 * idx.texcoord_index + 1]
                         };
@@ -380,7 +390,8 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
                     mesh.vertices.push_back(vert);
                     umap[key] = newIndex;
                 }
-                else {
+                else 
+                {
                     newIndex = it->second;
                 }
                 mesh.indices.push_back(newIndex);
@@ -389,13 +400,16 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         }
     }
 
-    for (auto& mesh : meshPerMat) {
-        for (auto& v : mesh.vertices) {
+    for (auto& mesh : meshPerMat) 
+    {
+        for (auto& v : mesh.vertices) 
+        {
             v.tangent = { 0,0,0 };
             v.handedness = 0;
         }
 
-        for (size_t f = 0; f + 2 < mesh.indices.size(); f += 3) {
+        for (size_t f = 0; f + 2 < mesh.indices.size(); f += 3) 
+        {
             uint32_t i0 = mesh.indices[f], i1 = mesh.indices[f + 1], i2 = mesh.indices[f + 2];
             auto& v0 = mesh.vertices[i0];
             auto& v1 = mesh.vertices[i1];
@@ -410,12 +424,14 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
             XMVECTOR T, B;
             float H;
 
-            if (fabs(det) < 1e-6f) {
+            if (fabs(det) < 1e-6f)
+            {
                 T = XMVectorSet(1, 0, 0, 0);
                 B = XMVectorSet(0, 1, 0, 0);
                 H = 1.0f;
             }
-            else {
+            else
+            {
                 float invDet = 1.0f / det;
                 XMVECTOR p0 = XMLoadFloat3(&v0.Pos);
                 XMVECTOR p1 = XMLoadFloat3(&v1.Pos);
@@ -439,7 +455,8 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
             v0.handedness = v1.handedness = v2.handedness = H;
         }
 
-        for (auto& v : mesh.vertices) {
+        for (auto& v : mesh.vertices) 
+        {
             XMVECTOR t = XMLoadFloat3(&v.tangent);
             t = XMVector3Normalize(t);
             XMStoreFloat3(&v.tangent, t);
@@ -451,8 +468,7 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
 
     for (size_t i = 0; i < N; ++i) 
     {
-        if (meshPerMat[i].indices.empty())
-            continue;
+        if (meshPerMat[i].indices.empty()) continue;
 
         SceneObject obj(
             meshPerMat[i],
@@ -464,6 +480,7 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
         if (i < M) 
         {
             const auto& m = materials[i];
+
             obj.material.ambient = { m.ambient[0],  m.ambient[1],  m.ambient[2] };
             obj.material.diffuse = { m.diffuse[0],  m.diffuse[1],  m.diffuse[2] };
             obj.material.specular = { m.specular[0], m.specular[1], m.specular[2] };
@@ -478,6 +495,18 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
             obj.material.roughnessTexPath = m.roughness_texname;
             obj.material.metallicTexPath = m.metallic_texname;
             obj.material.aoTexPath = m.ambient_texname;
+
+            const bool hasMetalMap = !m.metallic_texname.empty();
+            const bool hasRoughMap = !m.roughness_texname.empty();
+
+            const bool hasAnyPBR = hasMetalMap || hasRoughMap || (m.metallic > 0.0f) || (m.roughness > 0.0f);
+
+            if (!hasAnyPBR)
+            {
+                obj.material.metallic = 0.0f;
+                float Ns = max(0.0f, m.shininess);
+                obj.material.roughness = 1.0f;
+            }
         }
         else 
         {
