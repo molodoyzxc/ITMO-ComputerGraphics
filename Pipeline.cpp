@@ -166,19 +166,21 @@ void Pipeline::Init()
         &gbTessWireDesc, IID_PPV_ARGS(&m_gBufferTessellationWireframePSO)
     ));
 
-    CD3DX12_DESCRIPTOR_RANGE defSrvRanges[2];
+    CD3DX12_DESCRIPTOR_RANGE defSrvRanges[3];
     defSrvRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
     defSrvRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
+    defSrvRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 5);
 
     CD3DX12_DESCRIPTOR_RANGE defSampRange;
     defSampRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 2, 0);
 
-    CD3DX12_ROOT_PARAMETER defParams[5];
+    CD3DX12_ROOT_PARAMETER defParams[6];
     defParams[0].InitAsDescriptorTable(1, &defSrvRanges[0], D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[2].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[3].InitAsDescriptorTable(1, &defSampRange, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[4].InitAsDescriptorTable(1, &defSrvRanges[1], D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[5].InitAsDescriptorTable(1, &defSrvRanges[2], D3D12_SHADER_VISIBILITY_PIXEL);
 
     CD3DX12_ROOT_SIGNATURE_DESC deferredRSDesc;
     deferredRSDesc.Init(
@@ -202,8 +204,6 @@ void Pipeline::Init()
     defDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
     defDesc.PS = { psLight->GetBufferPointer(), psLight->GetBufferSize() };
     defDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    opaqueDesc.RasterizerState.FrontCounterClockwise = FALSE;
-    opaqueDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
 
     D3D12_BLEND_DESC blendDesc = {};
     blendDesc.AlphaToCoverageEnable = FALSE;

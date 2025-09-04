@@ -101,8 +101,22 @@ private:
     float postGamma = 2.2f;
     float postVignetteStrength = 0.20f;
     float postVignettePower = 2.0f;
-    DirectX::XMFLOAT2 postVignetteCenter{ 0.5f, 0.5f };
+    XMFLOAT2 postVignetteCenter{ 0.5f, 0.5f };
     int postTonemap = 2;
+
+    int   m_spotLightIndex = 0;
+    float m_spotPlaneY = 0.0f;
+    void  AimSpotlightToCursor();
+    void  ComputeMouseRay(DirectX::XMVECTOR& origin, DirectX::XMVECTOR& dir) const;
+
+    struct IBLSet
+    {
+        UINT irradianceSrv = UINT(-1);
+        UINT prefilteredSrv = UINT(-1);
+        UINT brdfSrv = UINT(-1);
+        CD3DX12_GPU_DESCRIPTOR_HANDLE tableStart{};
+    };
+    IBLSet m_ibl;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }

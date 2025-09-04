@@ -41,7 +41,6 @@ void InputDevice::OnKeyDown(KeyboardInputEventArgs args)
 
 void InputDevice::OnMouseMove(RawMouseEventArgs args)
 {
-    // Обработка кнопок мыши аналогично...
     POINT p; GetCursorPos(&p);
     ScreenToClient(hWnd_, &p);
     MousePosition = Vector2(p.x, p.y);
@@ -63,4 +62,17 @@ void InputDevice::RemovePressedKey(Keys key)
 bool InputDevice::IsKeyDown(Keys key)
 {
     return keys_.count(key) != 0;
+}
+
+HWND InputDevice::GetHwnd() const
+{
+    return hWnd_;
+}
+
+POINT InputDevice::GetCursorPosClient() const
+{
+    POINT p;
+    ::GetCursorPos(&p);
+    ::ScreenToClient(hWnd_, &p);
+    return p;
 }

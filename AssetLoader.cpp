@@ -12,6 +12,27 @@
 #include "SceneObject.h"
 #include <vector>
 
+static std::wstring HrToMessageW(HRESULT hr) {
+    LPWSTR buf = nullptr;
+    DWORD len = FormatMessageW(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, hr, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        (LPWSTR)&buf, 0, nullptr);
+    std::wstring msg = (len && buf) ? std::wstring(buf, len) : L"Unknown error";
+    if (buf) LocalFree(buf);
+    return msg;
+}
+
+[[noreturn]] static void ThrowHRW(HRESULT hr, const wchar_t* where, const wchar_t* path) {
+    std::wstring m = L"[DDS] ";
+    m += where;
+    m += L" '";
+    m += path;
+    m += L"': ";
+    m += HrToMessageW(hr);
+    throw std::runtime_error(std::string(m.begin(), m.end()));
+}
+
 Mesh AssetLoader::LoadGeometry(const std::string& objPath)
 {
     tinyobj::attrib_t attrib;
@@ -198,6 +219,66 @@ UINT AssetLoader::LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadB
             D3D12_RESOURCE_STATE_COPY_DEST,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
         );
+    }
+    else if(_wcsicmp(ext.c_str(), L".dds") == 0)
+    {
+        ScratchImage scratch;
+        TexMetadata meta{};
+        hr = LoadFromDDSFile(filename, DDS_FLAGS_NONE, &meta, scratch);
+        if (FAILED(hr)) {
+            throw std::runtime_error("LoadFromDDSFile failed");
+        }
+
+        if (meta.IsCubemap()) {
+            throw std::runtime_error("DDS is cubemap, but 2D texture expected for BRDF LUT");
+        }
+
+        hr = CreateTexture(device, meta, texture.ReleaseAndGetAddressOf());
+        ThrowIfFailed(hr);
+
+        std::vector<D3D12_SUBRESOURCE_DATA> subs;
+        subs.reserve(scratch.GetImageCount());
+        const Image* imgs = scratch.GetImages();
+        for (size_t i = 0; i < scratch.GetImageCount(); ++i) {
+            D3D12_SUBRESOURCE_DATA d{};
+            d.pData = imgs[i].pixels;
+            d.RowPitch = imgs[i].rowPitch;
+            d.SlicePitch = imgs[i].slicePitch;
+            subs.push_back(d);
+        }
+
+        uploadBatch.Upload(texture.Get(), 0, subs.data(), (UINT)subs.size());
+        uploadBatch.Transition(texture.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+    else if (_wcsicmp(ext.c_str(), L".hdr") == 0)
+    {
+        ScratchImage scratch;
+        TexMetadata meta{};
+        hr = LoadFromHDRFile(filename, &meta, scratch);
+        if (FAILED(hr)) {
+            throw std::runtime_error("LoadFromHDRFile failed");
+        }
+
+        hr = CreateTexture(device, meta, texture.ReleaseAndGetAddressOf());
+        ThrowIfFailed(hr);
+
+        std::vector<D3D12_SUBRESOURCE_DATA> subs;
+        subs.reserve(scratch.GetImageCount());
+        const Image* imgs = scratch.GetImages();
+        for (size_t i = 0; i < scratch.GetImageCount(); ++i) {
+            D3D12_SUBRESOURCE_DATA d{};
+            d.pData = imgs[i].pixels;
+            d.RowPitch = imgs[i].rowPitch;
+            d.SlicePitch = imgs[i].slicePitch;
+            subs.push_back(d);
+        }
+
+        uploadBatch.Upload(texture.Get(), 0, subs.data(), (UINT)subs.size());
+        uploadBatch.Transition(texture.Get(),
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
     else 
     {
@@ -444,4 +525,49 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjectsLODs(const std::vector<std
     }
 
     return base;
+}
+
+UINT AssetLoader::LoadDDSTextureCube(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename)
+{
+    using namespace DirectX;
+    ScratchImage scratch;
+    TexMetadata meta{};
+    HRESULT hr = LoadFromDDSFile(filename, DDS_FLAGS_NONE, &meta, scratch);
+    if (FAILED(hr)) throw std::runtime_error("LoadFromDDSFile failed");
+
+    if ((meta.miscFlags & TEX_MISC_TEXTURECUBE) == 0)
+        throw std::runtime_error("not cubemap");
+
+    ComPtr<ID3D12Resource> texture;
+    ThrowIfFailed(CreateTexture(device, meta, texture.ReleaseAndGetAddressOf()));
+
+    std::vector<D3D12_SUBRESOURCE_DATA> subs;
+    subs.reserve(scratch.GetImageCount());
+    const Image* imgs = scratch.GetImages();
+    for (size_t i = 0; i < scratch.GetImageCount(); ++i) {
+        D3D12_SUBRESOURCE_DATA s{};
+        s.pData = imgs[i].pixels;
+        s.RowPitch = imgs[i].rowPitch;
+        s.SlicePitch = imgs[i].slicePitch;
+        subs.push_back(s);
+    }
+
+    uploadBatch.Upload(texture.Get(), 0, subs.data(), (UINT)subs.size());
+    uploadBatch.Transition(texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = meta.format;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srv.TextureCube.MipLevels = (UINT)meta.mipLevels;
+
+    UINT srvIndex = framework->AllocateSrvDescriptor();
+    auto cpu = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+        framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart(),
+        srvIndex, framework->GetSrvDescriptorSize());
+    device->CreateShaderResourceView(texture.Get(), &srv, cpu);
+
+    textures.push_back(texture);
+    return srvIndex;
 }

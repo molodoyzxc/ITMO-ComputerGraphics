@@ -17,8 +17,12 @@ public:
 	UINT LoadTexture(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename);
 	std::vector<SceneObject> LoadSceneObjects(const std::string& objPath);
 	std::vector<SceneObject> LoadSceneObjectsLODs(const std::vector<std::string>& objPaths, const std::vector<float>& distances = {});
+	UINT LoadDDSTextureCube(ID3D12Device* device, ResourceUploadBatch& uploadBatch, DX12Framework* framework, const wchar_t* filename);
 
 private:
 	std::vector <ComPtr<ID3D12Resource>> textures;
+
+private:
+	static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
 };
 

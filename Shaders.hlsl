@@ -378,15 +378,53 @@ float3 FresnelSchlick(float cosTheta, float3 F0)
     return F0 + (1.0 - F0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
+float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+    return F0 + (max(1.0.xxx - roughness, F0) - F0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
 float4 PS_Ambient(VSQOut IN) : SV_TARGET
 {
-    float4 albedo = gAlbedoTex.Sample(samLinear, IN.uv);
-    if (albedo.a < 0.1)
+    float2 uv = IN.uv;
+    
+    float depth = gDepthTex.SampleLevel(samLinear, uv, 0).r;
+    if (depth >= 1.0)
         discard;
+    float2 ndc = float2(2.0 * uv.x - 1.0, 1.0 - 2.0 * uv.y);
+    float4 clipPos = float4(ndc, depth, 1.0);
+    float4 worldH = mul(clipPos, InvViewProj);
+    float3 worldPos = worldH.xyz / worldH.w;
+    
+    float3 baseColor = gAlbedoTex.Sample(samLinear, uv).rgb;
+    float3 N = normalize(gNormalTex.Sample(samLinear, uv).xyz * 2.0 - 1.0);
 
-    float ao = gParamTex.Sample(samLinear, IN.uv).b;
-    float3 ambient = albedo.rgb * AmbientColor.rgb * ao;
-    return float4(ambient, 1.0);
+    float3 params = gParamTex.Sample(samLinear, uv).rgb;
+    float roughness = saturate(params.r);
+    float metallic = saturate(params.g);
+    float ao = saturate(params.b);
+
+    float3 V = normalize(CameraPos.xyz - worldPos);
+    float NoV = saturate(dot(N, V));
+    
+    float3 F0 = lerp(0.04.xxx, baseColor, metallic);
+    
+    float3 diffuseIBL = gIrradiance.Sample(samLinear, N) * baseColor;
+    
+    uint w, h, mips;
+    gPrefEnv.GetDimensions(0, w, h, mips);
+    float3 R = reflect(-V, N);
+    float lod = roughness * (mips - 1);
+    float3 prefiltered = gPrefEnv.SampleLevel(samLinear, R, lod);
+
+    float2 brdf = gBRDFLUT.Sample(samLinear, float2(NoV, roughness));
+    float3 specularIBL = prefiltered * (F0 * brdf.x + brdf.y);
+    
+    float3 kS = FresnelSchlickRoughness(NoV, F0, roughness);
+    float3 kD = (1.0 - kS) * (1.0 - metallic);
+    
+    float3 color = (kD * diffuseIBL + specularIBL) * ao * AmbientColor.rgb;
+
+    return float4(color, 1.0);
 }
 
 float4 PS_Lighting(VSQOut IN) : SV_TARGET

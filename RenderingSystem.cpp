@@ -122,13 +122,13 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            //"Assets\\SponzaCrytek\\sponza.obj", 
-            "Assets\\TestPBR\\TestPBR.obj", 
+            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\TestPBR\\TestPBR.obj", 
         },
         { 0.0f, }
     );
 
-    m_objectScale = 1.1f;
+    m_objectScale = 0.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -190,8 +190,8 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -347,6 +347,24 @@ void RenderingSystem::Initialize()
     LoadTextures();
 
     {
+        using DirectX::ResourceUploadBatch;
+        auto* device = m_framework->GetDevice();
+        ResourceUploadBatch ub(device);
+        ub.Begin();
+
+        m_ibl.irradianceSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomDiffuseHDR.dds");
+        m_ibl.prefilteredSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomSpecularHDR.dds");
+        m_ibl.brdfSrv = loader.LoadTexture(device, ub, m_framework, L"Assets\\IBL\\out\\RoomBrdf.dds");
+
+        auto fut = ub.End(m_framework->GetCommandQueue());
+        fut.wait();
+
+        m_ibl.tableStart = CD3DX12_GPU_DESCRIPTOR_HANDLE(
+            m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart(),
+            m_ibl.irradianceSrv, m_framework->GetSrvDescriptorSize());
+    }
+
+    {
         auto* device = m_framework->GetDevice();
         const UINT width = static_cast<UINT>(m_framework->GetWidth());
         const UINT height = static_cast<UINT>(m_framework->GetHeight());
@@ -419,6 +437,8 @@ void RenderingSystem::Update(float)
     if (m_input->IsKeyDown(Keys::U)) lights[0].position.y -= 2.0f;
     if (m_input->IsKeyDown(Keys::I)) lights[0].position.z += 2.0f;
     if (m_input->IsKeyDown(Keys::K)) lights[0].position.z -= 2.0f;
+
+    if (m_input->IsKeyDown(Keys::F)) AimSpotlightToCursor();
 
     CountFPS();
     KeyboardControl();
@@ -801,6 +821,7 @@ void RenderingSystem::DeferredPass()
     cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
     cmd->SetGraphicsRootDescriptorTable(4, m_shadow->Srv());
+    cmd->SetGraphicsRootDescriptorTable(5, m_ibl.tableStart);
 
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
@@ -1035,4 +1056,62 @@ void RenderingSystem::ExtractShadowCastersForCascade(UINT ci, const XMMATRIX& LV
         if (XMVector3EqualInt(XMVectorAndInt(overMin, underMax), XMVectorTrueInt()))
             m_shadowCasters[ci].push_back(&o);
     }
+}
+
+void RenderingSystem::ComputeMouseRay(XMVECTOR& origin, XMVECTOR& dir) const
+{
+    POINT pc = m_input->GetCursorPosClient();
+
+    RECT rc; ::GetClientRect(m_input->GetHwnd(), &rc);
+    float cw = float(rc.right - rc.left);
+    float ch = float(rc.bottom - rc.top);
+    float u = cw > 0 ? pc.x / cw : 0.0f;
+    float v = ch > 0 ? pc.y / ch : 0.0f;
+
+    float vw = float(m_framework->GetWidth());
+    float vh = float(m_framework->GetHeight());
+    float sx = u * vw;
+    float sy = v * vh;
+
+    float vpX = 0.0f, vpY = 0.0f, vpW = vw, vpH = vh, vpMinZ = 0.0f, vpMaxZ = 1.0f;
+
+    XMVECTOR pNear = XMVectorSet(sx, sy, vpMinZ, 1.0f);
+    XMVECTOR pFar = XMVectorSet(sx, sy, vpMaxZ, 1.0f);
+    pNear = XMVector3Unproject(pNear, vpX, vpY, vpW, vpH, vpMinZ, vpMaxZ, proj, view, XMMatrixIdentity());
+    pFar = XMVector3Unproject(pFar, vpX, vpY, vpW, vpH, vpMinZ, vpMaxZ, proj, view, XMMatrixIdentity());
+
+    origin = pNear;
+    dir = XMVector3Normalize(pFar - pNear);
+}
+
+void RenderingSystem::AimSpotlightToCursor()
+{
+    if (lights.empty()) return;
+
+    Light& L = lights[m_spotLightIndex];
+    L.type = 2;
+
+    XMVECTOR ro, rd;
+    ComputeMouseRay(ro, rd);
+
+    float oy = XMVectorGetY(ro);
+    float dy = XMVectorGetY(rd);
+    if (fabsf(dy) < 1e-6f) return;
+
+    float t = (m_spotPlaneY - oy) / dy;
+    if (t <= 0.0f) return;
+
+    XMVECTOR hit = XMVectorAdd(ro, XMVectorScale(rd, t));
+    XMFLOAT3 h;
+    XMStoreFloat3(&h, hit);
+
+    XMVECTOR toTarget = XMVector3Normalize(XMVectorSet(h.x - L.position.x, h.y - L.position.y, h.z - L.position.z, 0.0f));
+
+    XMFLOAT3 d;
+    XMStoreFloat3(&d, toTarget);
+    L.spotDirection = d;
+
+    if (L.radius < 5.0f)     L.radius = 50.0f;
+    if (L.inner <= 0.0f)    L.inner = 15.0f;
+    if (L.outer <= L.inner) L.outer = 30.0f;
 }

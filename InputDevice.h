@@ -32,6 +32,9 @@ public:
     void RemovePressedKey(Keys key);
     bool IsKeyDown(Keys key);
 
+    HWND GetHwnd() const;
+    POINT GetCursorPosClient() const;
+
 public:
     struct KeyboardInputEventArgs
     {
