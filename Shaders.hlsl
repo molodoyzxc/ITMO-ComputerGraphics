@@ -537,3 +537,19 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
 
     return float4(radiance, 1.0);
 }
+
+float4 PS_Skybox(VSQOut IN) : SV_TARGET
+{
+    float depth = gDepthTex.SampleLevel(samLinear, IN.uv, 0).r;
+    if (depth < 1.0)
+        discard;
+    
+    float2 ndc = float2(2.0 * IN.uv.x - 1.0, 1.0 - 2.0 * IN.uv.y);
+    float4 farH = mul(float4(ndc, 1.0, 1.0), InvViewProj);
+    float3 worldFar = farH.xyz / max(farH.w, 1e-6);
+    float3 dir = normalize(worldFar - CameraPos.xyz);
+    
+    float3 sky = gPrefEnv.SampleLevel(samLinear, dir, 0);
+
+    return float4(sky, 1.0);
+}

@@ -29,6 +29,7 @@ public:
     ID3D12PipelineState* GetParticlesUpdateCSO() const { return m_particlesUpdateCSO.Get(); }
     ID3D12PipelineState* GetParticlesEmitCSO() const { return m_particlesEmitCSO.Get(); }
     ID3D12PipelineState* GetPostPSO() const { return m_postPSO.Get(); }
+    ID3D12PipelineState* GetSkyPSO() const { return m_skyPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -48,6 +49,7 @@ private:
     ComPtr<ID3D12PipelineState> m_particlesUpdateCSO;
     ComPtr<ID3D12PipelineState> m_particlesEmitCSO;
     ComPtr<ID3D12PipelineState> m_postPSO;
+    ComPtr<ID3D12PipelineState> m_skyPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

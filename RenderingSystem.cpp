@@ -204,7 +204,6 @@ void RenderingSystem::LoadErrorTextures()
     }
 }
 
-
 void RenderingSystem::LoadTextures()
 {
     auto* device = m_framework->GetDevice();
@@ -377,9 +376,9 @@ void RenderingSystem::Initialize()
         ResourceUploadBatch ub(device);
         ub.Begin();
 
-        m_ibl.irradianceSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\stuff\\IrradianceMap_BC6U.dds");
-        m_ibl.prefilteredSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\stuff\\PreFilteredEnvMap_BC6U.dds");
-        m_ibl.brdfSrv = loader.LoadTexture(device, ub, m_framework, L"Assets\\IBL\\stuff\\IntegrationMap.dds");
+        m_ibl.irradianceSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomDiffuseHDR.dds");
+        m_ibl.prefilteredSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomEnvHDR.dds");
+        m_ibl.brdfSrv = loader.LoadTexture(device, ub, m_framework, L"Assets\\IBL\\out\\RoomBrdf.dds");
 
         auto fut = ub.End(m_framework->GetCommandQueue());
         fut.wait();
@@ -833,9 +832,9 @@ void RenderingSystem::DeferredPass()
     m_framework->SetViewportAndScissors();
 
     cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
-    cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
-    SetCommonHeaps();
 
+    SetCommonHeaps();
+    UpdateLightCB();
     cmd->SetGraphicsRootDescriptorTable(0, m_gbuffer->GetSRVs()[0]);
     cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
@@ -843,16 +842,18 @@ void RenderingSystem::DeferredPass()
     cmd->SetGraphicsRootDescriptorTable(4, m_shadow->Srv());
     cmd->SetGraphicsRootDescriptorTable(5, m_ibl.tableStart);
 
+    cmd->SetPipelineState(m_pipeline.GetSkyPSO());
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
 
+    cmd->SetPipelineState(m_pipeline.GetAmbientPSO());
+    cmd->DrawInstanced(3, 1, 0, 0);
+
     cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
-    UpdateLightCB();
     const UINT lightCBSize = Align256(sizeof(LightCB));
     for (size_t i = 0; i < lights.size(); ++i) {
         D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * lightCBSize;
         cmd->SetGraphicsRootConstantBufferView(1, cbAddr);
-        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         cmd->DrawInstanced(3, 1, 0, 0);
     }
 

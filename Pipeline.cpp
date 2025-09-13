@@ -53,6 +53,9 @@ void Pipeline::Init()
     ComPtr<IDxcBlob> psPost;
     Compile(L"Shaders.hlsl", L"PS_Post", L"ps_6_0", psPost);
 
+    ComPtr<IDxcBlob> psSkybox;
+    Compile(L"Shaders.hlsl", L"PS_Skybox", L"ps_6_0", psSkybox);
+
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -339,6 +342,37 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &postDesc, IID_PPV_ARGS(&m_postPSO)
     ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC skyDesc = {};
+    skyDesc.InputLayout = { nullptr, 0 };
+    skyDesc.pRootSignature = m_deferredRootSig.Get();
+    skyDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+    skyDesc.PS = { psSkybox->GetBufferPointer(), psSkybox->GetBufferSize() };
+    skyDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+
+    blendReplace = {};
+    rt0 = blendReplace.RenderTarget[0];
+    rt0.BlendEnable = TRUE;
+    rt0.SrcBlend = D3D12_BLEND_ONE;
+    rt0.DestBlend = D3D12_BLEND_ZERO;
+    rt0.BlendOp = D3D12_BLEND_OP_ADD;
+    rt0.SrcBlendAlpha = D3D12_BLEND_ONE;
+    rt0.DestBlendAlpha = D3D12_BLEND_ZERO;
+    rt0.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    rt0.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    skyDesc.BlendState = blendReplace;
+
+    skyDesc.DepthStencilState.DepthEnable = FALSE;
+    skyDesc.SampleMask = UINT_MAX;
+    skyDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    skyDesc.NumRenderTargets = 1;
+    skyDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    skyDesc.SampleDesc.Count = 1;
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &skyDesc, IID_PPV_ARGS(&m_skyPSO)
+    ));
+
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)
