@@ -14,6 +14,7 @@
 #include "ShadowMap.h"
 #include <array>
 #include "ParticleSystem.h"
+#include "Octree.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -104,11 +105,6 @@ private:
     XMFLOAT2 postVignetteCenter{ 0.5f, 0.5f };
     int postTonemap = 2;
 
-    int   m_spotLightIndex = 0;
-    float m_spotPlaneY = 0.0f;
-    void  AimSpotlightToCursor();
-    void  ComputeMouseRay(DirectX::XMVECTOR& origin, DirectX::XMVECTOR& dir) const;
-
     struct IBLSet
     {
         UINT irradianceSrv = UINT(-1);
@@ -117,6 +113,8 @@ private:
         CD3DX12_GPU_DESCRIPTOR_HANDLE tableStart{};
     };
     IBLSet m_ibl;
+
+    std::unique_ptr<Octree> m_octree;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -152,4 +150,8 @@ private:
         float minY, float maxY,
         float minZ, float maxZ
     );
+
+    void RebuildOctree();
+    static void ComputeLocalSphereFromMesh(const Mesh& m, XMFLOAT3& c, float& r);
+    static AABB MakeWorldAABBFromSphere(const XMMATRIX& world, const XMFLOAT3& cLocal, float rLocal, const XMFLOAT3& scale);
 };

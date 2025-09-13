@@ -123,14 +123,24 @@ void RenderingSystem::SetObjects()
     (
         {
             //"Assets\\SponzaCrytek\\sponza.obj", 
-            //"Assets\\TestPBR\\TestPBR.obj", 
+            "Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
-            "Assets\\TV\\Television_01_4k.obj", 
+            //"Assets\\LOD\\bunnyLOD0.obj", 
+            //"Assets\\LOD\\bunnyLOD1.obj", 
+            //"Assets\\LOD\\bunnyLOD2.obj", 
+            //"Assets\\LOD\\bunnyLOD3.obj", 
         },
-        { 0.0f, }
+        { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 100.1f;
+    //for(int i = 1; i < 200; i++)
+    //{
+    //    SceneObject tmp = m_objects[0];
+    //    tmp.position.x = i * 2;
+    //    m_objects.push_back(tmp);
+    //}
+
+    m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -174,17 +184,26 @@ void RenderingSystem::LoadErrorTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    errorTextures.white = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\white.jpg");
-    errorTextures.normal = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\flat_normal.png");
-    errorTextures.height = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorHeight.jpg");
-    errorTextures.metallic = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorMetallic.jpg");
-    errorTextures.roughness = errorTextures.white;
-    errorTextures.ambientOcclusion = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\black.jpg");
-    errorTextures.diffuse = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorDiffuse.jpg");
+    try 
+    {
+        errorTextures.white = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\white.jpg");
+        errorTextures.normal = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\flat_normal.png");
+        errorTextures.height = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorHeight.jpg");
+        errorTextures.metallic = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorMetallic.jpg");
+        errorTextures.roughness = errorTextures.white;
+        errorTextures.ambientOcclusion = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\black.jpg");
+        errorTextures.diffuse = loader.LoadTexture(device, uploadBatch, m_framework, L"Assets\\Error\\errorDiffuse.jpg");
 
-    auto finish = uploadBatch.End(m_framework->GetCommandQueue());
-    finish.wait();
+        auto finish = uploadBatch.End(m_framework->GetCommandQueue());
+        finish.wait();
+    }
+    catch (...) 
+    {
+        uploadBatch.End(m_framework->GetCommandQueue()).wait();
+        throw;
+    }
 }
+
 
 void RenderingSystem::LoadTextures()
 {
@@ -193,9 +212,9 @@ void RenderingSystem::LoadTextures()
     uploadBatch.Begin();
 
     //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
-    std::filesystem::path sceneFolder = L"Assets\\TV";
+    //std::filesystem::path sceneFolder = L"Assets\\LOD";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -342,6 +361,8 @@ void RenderingSystem::Initialize()
     SetObjects();
     SetLights();
 
+    RebuildOctree();
+
     ThrowIfFailed(cmd->Close());
     ID3D12CommandList* lists[] = { cmd };
     m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
@@ -356,9 +377,9 @@ void RenderingSystem::Initialize()
         ResourceUploadBatch ub(device);
         ub.Begin();
 
-        m_ibl.irradianceSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomDiffuseHDR.dds");
-        m_ibl.prefilteredSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomSpecularHDR.dds");
-        m_ibl.brdfSrv = loader.LoadTexture(device, ub, m_framework, L"Assets\\IBL\\out\\RoomBrdf.dds");
+        m_ibl.irradianceSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\stuff\\IrradianceMap_BC6U.dds");
+        m_ibl.prefilteredSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\stuff\\PreFilteredEnvMap_BC6U.dds");
+        m_ibl.brdfSrv = loader.LoadTexture(device, ub, m_framework, L"Assets\\IBL\\stuff\\IntegrationMap.dds");
 
         auto fut = ub.End(m_framework->GetCommandQueue());
         fut.wait();
@@ -442,8 +463,6 @@ void RenderingSystem::Update(float)
     if (m_input->IsKeyDown(Keys::I)) lights[0].position.z += 2.0f;
     if (m_input->IsKeyDown(Keys::K)) lights[0].position.z -= 2.0f;
 
-    if (m_input->IsKeyDown(Keys::F)) AimSpotlightToCursor();
-
     CountFPS();
     KeyboardControl();
 }
@@ -503,9 +522,11 @@ void RenderingSystem::UpdateUI()
         
         ImGui::Text("Camera pos: %f %f %f", cameraPos.x, cameraPos.y, cameraPos.z);
 
+        ImGui::Text("FPS: %.2f", m_currentFPS);
+        ImGui::Text("Visible objects %d", m_visibleObjects.size());
+
         ImGui::End();
     }
-    
 
     {
         ImGui::Begin("Object");
@@ -542,7 +563,6 @@ void RenderingSystem::UpdateUI()
         ImGui::InputFloat("Height scale", &m_heightScale, 1.0f);
         ImGui::InputFloat("Max tess", &m_maxTess, 1.0f);
         ImGui::Checkbox("Wireframe", &m_wireframe);
-        ImGui::Text("FPS: %.2f", m_currentFPS);
 
         ImGui::End();
     }
@@ -612,25 +632,14 @@ void RenderingSystem::ExtractVisibleObjects()
     ExtractFrustumPlanes(planes, viewProj);
 
     m_visibleObjects.clear();
-    m_visibleObjects.reserve(m_objects.size());
+    if (!m_octree) return;
 
-    for (auto& o : m_objects) {
-        const XMMATRIX world = o.GetWorldMatrix();
-        const XMVECTOR localCenter = XMLoadFloat3(&o.bsCenter);
-        const float    localRadius = o.bsRadius;
+    std::vector<void*> hits;
+    m_octree->QueryFrustum(planes, hits);
 
-        const XMVECTOR worldCenter = XMVector3Transform(localCenter, world);
-        const auto& s = o.scale;
-        const float    scaleLen = std::sqrt(s.x * s.x + s.y * s.y + s.z * s.z);
-        const float    worldRadius = localRadius * scaleLen;
-
-        bool visible = true;
-        for (int p = 0; p < 6; ++p) {
-            const XMVECTOR plane = XMLoadFloat4(&planes[p]);
-            const float dist = XMVectorGetX(XMPlaneDotCoord(plane, worldCenter));
-            if (dist < -worldRadius + 0.05f * worldRadius) { visible = false; break; }
-        }
-        if (visible) m_visibleObjects.push_back(&o);
+    for (void* p : hits)
+    {
+        m_visibleObjects.push_back(reinterpret_cast<SceneObject*>(p));
     }
 }
 
@@ -1069,60 +1078,67 @@ void RenderingSystem::ExtractShadowCastersForCascade(UINT ci, const XMMATRIX& LV
     }
 }
 
-void RenderingSystem::ComputeMouseRay(XMVECTOR& origin, XMVECTOR& dir) const
+void RenderingSystem::ComputeLocalSphereFromMesh(const Mesh& m, XMFLOAT3& c, float& r)
 {
-    POINT pc = m_input->GetCursorPosClient();
+    using namespace DirectX;
 
-    RECT rc; ::GetClientRect(m_input->GetHwnd(), &rc);
-    float cw = float(rc.right - rc.left);
-    float ch = float(rc.bottom - rc.top);
-    float u = cw > 0 ? pc.x / cw : 0.0f;
-    float v = ch > 0 ? pc.y / ch : 0.0f;
+    XMVECTOR vmin = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0);
+    XMVECTOR vmax = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0);
 
-    float vw = float(m_framework->GetWidth());
-    float vh = float(m_framework->GetHeight());
-    float sx = u * vw;
-    float sy = v * vh;
+    for (auto& v : m.vertices)
+    {
+        XMVECTOR p = XMLoadFloat3(&v.Pos);
+        vmin = XMVectorMin(vmin, p); vmax = XMVectorMax(vmax, p);
+    }
 
-    float vpX = 0.0f, vpY = 0.0f, vpW = vw, vpH = vh, vpMinZ = 0.0f, vpMaxZ = 1.0f;
-
-    XMVECTOR pNear = XMVectorSet(sx, sy, vpMinZ, 1.0f);
-    XMVECTOR pFar = XMVectorSet(sx, sy, vpMaxZ, 1.0f);
-    pNear = XMVector3Unproject(pNear, vpX, vpY, vpW, vpH, vpMinZ, vpMaxZ, proj, view, XMMatrixIdentity());
-    pFar = XMVector3Unproject(pFar, vpX, vpY, vpW, vpH, vpMinZ, vpMaxZ, proj, view, XMMatrixIdentity());
-
-    origin = pNear;
-    dir = XMVector3Normalize(pFar - pNear);
+    XMVECTOR center = 0.5f * (vmin + vmax);
+    XMVECTOR half = 0.5f * (vmax - vmin);
+    r = XMVectorGetX(XMVector3Length(half));
+    XMStoreFloat3(&c, center);
 }
 
-void RenderingSystem::AimSpotlightToCursor()
+AABB RenderingSystem::MakeWorldAABBFromSphere(const XMMATRIX& world, const XMFLOAT3& cLocal, float rLocal, const XMFLOAT3& scale)
 {
-    if (lights.empty()) return;
+    using namespace DirectX;
 
-    Light& L = lights[m_spotLightIndex];
-    L.type = 2;
+    XMVECTOR cL = XMLoadFloat3(&cLocal);
+    XMVECTOR cw = XMVector3Transform(cL, world);
+    float scaleLen = std::sqrt(scale.x * scale.x + scale.y * scale.y + scale.z * scale.z);
+    float rW = rLocal * scaleLen;
+    XMFLOAT3 cW; XMStoreFloat3(&cW, cw);
+    AABB a{};
+    a.minv = { cW.x - rW, cW.y - rW, cW.z - rW };
+    a.maxv = { cW.x + rW, cW.y + rW, cW.z + rW };
+    return a;
+}
 
-    XMVECTOR ro, rd;
-    ComputeMouseRay(ro, rd);
+void RenderingSystem::RebuildOctree()
+{
+    if (m_objects.empty())
+    {
+        m_octree.reset(); return;
+    }
 
-    float oy = XMVectorGetY(ro);
-    float dy = XMVectorGetY(rd);
-    if (fabsf(dy) < 1e-6f) return;
+    AABB scene{};
+    std::vector<OctItem> items; items.reserve(m_objects.size());
 
-    float t = (m_spotPlaneY - oy) / dy;
-    if (t <= 0.0f) return;
+    for (auto& o : m_objects)
+    {
+        const Mesh& m = (!o.lodMeshes.empty() ? o.lodMeshes.front() : o.mesh);
+        XMFLOAT3 cL{}; float rL = 0.0f;
+        ComputeLocalSphereFromMesh(m, cL, rL);
 
-    XMVECTOR hit = XMVectorAdd(ro, XMVectorScale(rd, t));
-    XMFLOAT3 h;
-    XMStoreFloat3(&h, hit);
+        const XMMATRIX W = o.GetWorldMatrix();
+        AABB a = MakeWorldAABBFromSphere(W, cL, rL, o.scale);
 
-    XMVECTOR toTarget = XMVector3Normalize(XMVectorSet(h.x - L.position.x, h.y - L.position.y, h.z - L.position.z, 0.0f));
+        scene.expand(a);
+        items.push_back({ a, &o });
+    }
 
-    XMFLOAT3 d;
-    XMStoreFloat3(&d, toTarget);
-    L.spotDirection = d;
+    const float pad = 1.0f;
+    scene.minv.x -= pad; scene.minv.y -= pad; scene.minv.z -= pad;
+    scene.maxv.x += pad; scene.maxv.y += pad; scene.maxv.z += pad;
 
-    if (L.radius < 5.0f)     L.radius = 50.0f;
-    if (L.inner <= 0.0f)    L.inner = 15.0f;
-    if (L.outer <= L.inner) L.outer = 30.0f;
+    if (!m_octree) m_octree = std::make_unique<Octree>();
+    m_octree->Build(scene, items, 8, 8, 2.0f);
 }
