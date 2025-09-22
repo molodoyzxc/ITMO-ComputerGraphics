@@ -137,6 +137,11 @@ private:
 
     std::unique_ptr<Octree> m_octree;
 
+    UINT m_shadowMaskSrvIndex = UINT(-1);
+    CD3DX12_GPU_DESCRIPTOR_HANDLE m_shadowMaskSRV{};
+    XMFLOAT2 m_shadowMaskTiling{ 0.1f, 0.1f };
+    float m_shadowMaskStrength = 0.0f;
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }

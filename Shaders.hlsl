@@ -26,6 +26,8 @@ cbuffer LightingCB : register(b1)
     float4 ShadowParams;
 
     float4 CameraPos;
+    
+    float4 ShadowMaskParams;
 };
 
 cbuffer AmbientCB : register(b2)
@@ -57,18 +59,6 @@ cbuffer MaterialCB : register(b4)
     float _padM;
 };
 
-cbuffer PostCB : register(b1) 
-{
-    float Exposure;
-    float Gamma;
-    float VignetteStrength;
-    float VignettePower;
-    float2 VignetteCenter;
-    float2 InvResolution;
-    int Tonemap;
-    int _padPost;
-}
-
 static const uint MAX_SRV = 100; // DX12Framework::srvDesc.NumDescriptors
 Texture2D<float4> gTextures[MAX_SRV] : register(t0);
 
@@ -84,6 +74,8 @@ SamplerComparisonState samShadow : register(s1);
 TextureCube<float3> gIrradiance : register(t5);
 TextureCube<float3> gPrefEnv : register(t6);
 Texture2D<float2> gBRDFLUT : register(t7);
+
+Texture2D gShadowMask : register(t8);
 
 struct VSInput
 {
@@ -258,7 +250,6 @@ GBufferOut PS_GBuffer(VSOutput IN)
     return OUT;
 }
 
-
 struct VSFwdOut
 {
     float4 posH : SV_POSITION;
@@ -426,6 +417,31 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
         uint cascadeIdx = ChooseCascade(worldPos);
         shadow = PCF_Shadow(worldPos, cascadeIdx);
 
+        {
+            float2 tiling = ShadowMaskParams.xy;
+            float strength = saturate(ShadowMaskParams.z); 
+            
+            float3 w = normalize(-LightDir.xyz);
+            float3 a = (abs(w.y) < 0.999) ? float3(0, 1, 0) : float3(1, 0, 0);
+            float3 u = normalize(cross(a, w));
+            float3 v = cross(w, u);
+            
+            float2 muv = float2(dot(worldPos, u), dot(worldPos, v)) * tiling;
+            
+            muv.y = -muv.y;
+            
+            float2 muvWrap = frac(muv);
+            float mask = gShadowMask.Sample(samLinear, muvWrap).r;
+            
+            float shadowAmount = 1.0 - shadow;
+            
+            float shadowInFull = lerp(0.0, mask, strength);
+            
+            float shadowDecor = lerp(1.0, shadowInFull, shadowAmount);
+
+            shadow = shadowDecor;
+        }
+        
         float D = DistributionGGX(N, H, roughness);
         float G = GeometrySmith(N, V, L, roughness);
         float3 F = FresnelSchlick(saturate(dot(H, V)), F0);

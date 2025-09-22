@@ -62,9 +62,10 @@ struct SceneObject {
 
     DirectX::XMMATRIX GetWorldMatrix() const
     {
-        return XMMatrixScaling(scale.x, scale.y, scale.z) *
+        return
             XMMatrixRotationRollPitchYaw(rotation.x, rotation.y, rotation.z) *
-            XMMatrixTranslation(position.x, position.y, position.z);
+            XMMatrixTranslation(position.x, position.y, position.z) * 
+            XMMatrixScaling(scale.x, scale.y, scale.z);
     }
 public:
     void CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList* cmdList);

@@ -27,6 +27,7 @@ struct LightCB
     XMFLOAT4X4 View;
     XMFLOAT4 ShadowParams;
     XMFLOAT4 CameraPos;
+    XMFLOAT4 ShadowMaskParams;
 };
 
 struct AmbientCB { XMFLOAT4 AmbientColor; };
@@ -143,18 +144,19 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
-            //"Assets\\TestPBR\\TestPBR.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
+            "Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
             //"Assets\\LOD\\bunnyLOD1.obj", 
             //"Assets\\LOD\\bunnyLOD2.obj", 
             //"Assets\\LOD\\bunnyLOD3.obj", 
+            //"Assets\\TestShadows\\wall.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 0.1f;
+    m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -224,10 +226,11 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
+    //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -521,8 +524,23 @@ void RenderingSystem::Initialize()
 
     CreateConstantBuffers();
 
+    {
+        auto* device = m_framework->GetDevice();
+        DirectX::ResourceUploadBatch upload(device);
+        upload.Begin();
+
+        m_shadowMaskSrvIndex = loader.LoadTexture(device, upload, m_framework, L"Assets\\TestShadows\\mask.png");
+
+        auto finish = upload.End(m_framework->GetCommandQueue());
+        finish.wait();
+
+        auto  srvGPU0 = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+        UINT  srvInc = m_framework->GetSrvDescriptorSize();
+        m_shadowMaskSRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_shadowMaskSrvIndex, srvInc);
+    }
+
     m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
-    UINT particles = 1;
+    UINT particles = 10000;
     m_particles->Initialize(particles, particles);
 }
 
@@ -543,6 +561,8 @@ void RenderingSystem::Update(float)
     if (m_input->IsKeyDown(Keys::U)) lights[0].position.y -= 2.0f;
     if (m_input->IsKeyDown(Keys::I)) lights[0].position.z += 2.0f;
     if (m_input->IsKeyDown(Keys::K)) lights[0].position.z -= 2.0f;
+
+    //m_objects[2].rotation.x += 0.01f;
 
     CountFPS();
     KeyboardControl();
@@ -805,6 +825,8 @@ void RenderingSystem::UpdateLightCB()
         XMStoreFloat4x4(&cb.View, view);
         cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, (float)m_shadow->CascadeCount(), 0 };
 
+        cb.ShadowMaskParams = { m_shadowMaskTiling.x, m_shadowMaskTiling.y, m_shadowMaskStrength, 0.0f };
+
         cb.CameraPos = { cameraPos.x, cameraPos.y, cameraPos.z, 0.0f };
 
         memcpy(m_pLightData + UINT(i) * lightCBSize, &cb, sizeof(cb));
@@ -936,6 +958,7 @@ void RenderingSystem::DeferredPass()
     cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
     cmd->SetGraphicsRootDescriptorTable(4, m_shadow->Srv());
     cmd->SetGraphicsRootDescriptorTable(5, m_ibl.tableStart);
+    cmd->SetGraphicsRootDescriptorTable(6, m_shadowMaskSRV);
 
     cmd->SetPipelineState(m_pipeline.GetSkyPSO());
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

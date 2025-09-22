@@ -4,6 +4,15 @@
 #include "Meshes.h"
 using namespace DirectX;
 
+struct UpdateCB
+{
+    float dt; float accel[3];
+    UINT  spawnCount;
+    float emitterPos[3];
+    float initialSpeed;
+    UINT  aliveCount;
+};
+
 static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("hr"); }
 
 ParticleSystem::ParticleSystem(DX12Framework* fw, Pipeline* pipe)
@@ -149,24 +158,18 @@ void ParticleSystem::Initialize(UINT maxParticles, UINT initialSpawn)
 
         WriteUavDescriptors(m_bufA.Get(), m_cntA.Get(), m_bufB.Get(), m_cntB.Get());
 
-        struct UpdateCB 
-        {
-            float dt; float accel[3];
-            UINT  spawnCount;
-            float emitterPos[3];
-            float initialSpeed;
-            UINT  aliveCount;
-        } cb{};
+        UpdateCB cb{};
         cb.dt = 0.0f;
         cb.accel[0] = 0.0f;
-        cb.accel[1] = 0.1f;
+        cb.accel[1] = 0.0f;
         cb.accel[2] = 0.0f;
         cb.spawnCount = m_initialSpawn;
         cb.emitterPos[0] = 0.0f;
-        cb.emitterPos[1] = 10.0f;
+        cb.emitterPos[1] = 50.0f;
         cb.emitterPos[2] = 0.0f;
-        cb.initialSpeed = 20.0f;
+        cb.initialSpeed = 10.0f;
         cb.aliveCount = 0u;
+
         memcpy(m_updatePtr, &cb, sizeof(cb));
 
         ID3D12DescriptorHeap* heaps[] = { m_computeHeap.Get() };
@@ -261,20 +264,15 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
 
     if (m_aliveCount > 0)
     {
-        struct UpdateCB 
-        {
-            float dt; float accel[3];
-            UINT  spawnCount;
-            float emitterPos[3];
-            float initialSpeed;
-            UINT  aliveCount;
-        } cb{};
+        UpdateCB cb{};
         cb.dt = dt;
         cb.accel[0] = 0.0f;
-        cb.accel[1] = 0.1f;
+        cb.accel[1] = 0.0f;
         cb.accel[2] = 0.0f;
         cb.spawnCount = 0;
-        cb.emitterPos[0] = cb.emitterPos[1] = cb.emitterPos[2] = 0.0f;
+        cb.emitterPos[0] = 0.0f;
+        cb.emitterPos[1] = 50.0f;
+        cb.emitterPos[2] = 0.0f;
         cb.initialSpeed = 0.0f;
         cb.aliveCount = m_aliveCount;
         memcpy(m_updatePtr, &cb, sizeof(cb));

@@ -35,22 +35,6 @@ float rand01(uint s)
 }
 
 [numthreads(256, 1, 1)]
-void CS_Update(uint3 id : SV_DispatchThreadID)
-{
-    if (id.x >= aliveCount)
-        return;
-
-    Particle p = gIn.Consume();
-    p.vel += accel * dt;
-    p.pos += p.vel * dt;
-    p.age += dt;
-
-    if (p.age < p.lifetime)
-        gOut.Append(p);
-}
-
-
-[numthreads(256, 1, 1)]
 void CS_Emit(uint3 id : SV_DispatchThreadID)
 {
     uint i = id.x;
@@ -69,8 +53,23 @@ void CS_Emit(uint3 id : SV_DispatchThreadID)
 
     p.vel = dir * initialSpeed;
     p.age = 0.0;
-    p.lifetime = 50.0;
+    p.lifetime = 20.0;
     p.size = 1.0f;
 
     gOut.Append(p);
+}
+
+[numthreads(256, 1, 1)]
+void CS_Update(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= aliveCount)
+        return;
+
+    Particle p = gIn.Consume();
+    p.vel += accel * dt;
+    p.pos += p.vel * dt;
+    p.age += dt;
+
+    if (p.age < p.lifetime)
+        gOut.Append(p);
 }

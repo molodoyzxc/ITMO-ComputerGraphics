@@ -184,21 +184,23 @@ void Pipeline::Init()
         &gbTessWireDesc, IID_PPV_ARGS(&m_gBufferTessellationWireframePSO)
     ));
 
-    CD3DX12_DESCRIPTOR_RANGE defSrvRanges[3];
+    CD3DX12_DESCRIPTOR_RANGE defSrvRanges[4];
     defSrvRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
     defSrvRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
     defSrvRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 5);
+    defSrvRanges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 8);
 
     CD3DX12_DESCRIPTOR_RANGE defSampRange;
     defSampRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 2, 0);
 
-    CD3DX12_ROOT_PARAMETER defParams[6];
+    CD3DX12_ROOT_PARAMETER defParams[7];
     defParams[0].InitAsDescriptorTable(1, &defSrvRanges[0], D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[2].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[3].InitAsDescriptorTable(1, &defSampRange, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[4].InitAsDescriptorTable(1, &defSrvRanges[1], D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[5].InitAsDescriptorTable(1, &defSrvRanges[2], D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[6].InitAsDescriptorTable(1, &defSrvRanges[3], D3D12_SHADER_VISIBILITY_PIXEL);
 
     CD3DX12_ROOT_SIGNATURE_DESC deferredRSDesc;
     deferredRSDesc.Init(
