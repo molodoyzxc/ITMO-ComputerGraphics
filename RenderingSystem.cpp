@@ -133,13 +133,6 @@ void RenderingSystem::SetObjects()
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    //for(int i = 1; i < 200; i++)
-    //{
-    //    SceneObject tmp = m_objects[0];
-    //    tmp.position.x = i * 2;
-    //    m_objects.push_back(tmp);
-    //}
-
     m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
@@ -438,10 +431,79 @@ void RenderingSystem::Initialize()
         );
     }
 
+    {
+        auto* device = m_framework->GetDevice();
+        auto* rtvHeap = m_framework->GetRtvHeap();
+        const UINT rtvInc = m_framework->GetRtvDescriptorSize();
+        const auto rtvHeapDesc = rtvHeap->GetDesc();
+        const UINT last = rtvHeapDesc.NumDescriptors - 1;
+
+        // 1) Создаём два LDR ping-pong таргета
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        CD3DX12_RESOURCE_DESC ldrDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+            DXGI_FORMAT_R8G8B8A8_UNORM,
+            (UINT)m_framework->GetWidth(),
+            (UINT)m_framework->GetHeight(),
+            1, 1, 1, 0,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+
+        D3D12_CLEAR_VALUE ldrClear{};
+        ldrClear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        ldrClear.Color[0] = ldrClear.Color[1] = ldrClear.Color[2] = 0.0f; ldrClear.Color[3] = 1.0f;
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &ldrDesc,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &ldrClear,
+            IID_PPV_ARGS(&m_postA)));
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &ldrDesc,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &ldrClear,
+            IID_PPV_ARGS(&m_postB)));
+
+        m_postARTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+            rtvHeap->GetCPUDescriptorHandleForHeapStart(), last - 2, rtvInc);
+        m_postBRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+            rtvHeap->GetCPUDescriptorHandleForHeapStart(), last - 1, rtvInc);
+
+        device->CreateRenderTargetView(m_postA.Get(), nullptr, m_postARTV);
+        device->CreateRenderTargetView(m_postB.Get(), nullptr, m_postBRTV);
+
+        m_lightAccumRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+            rtvHeap->GetCPUDescriptorHandleForHeapStart(), last, rtvInc);
+
+        D3D12_RENDER_TARGET_VIEW_DESC hdrRtvDesc{};
+        hdrRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        hdrRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        device->CreateRenderTargetView(m_lightAccum.Get(), &hdrRtvDesc, m_lightAccumRTV);
+
+        m_postASrvIndex = m_framework->AllocateSrvDescriptor();
+        m_postBSrvIndex = m_framework->AllocateSrvDescriptor();
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+
+        auto  srvCPU0 = m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart();
+        auto  srvGPU0 = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+        UINT  srvInc = m_framework->GetSrvDescriptorSize();
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuA(srvCPU0, m_postASrvIndex, srvInc);
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuB(srvCPU0, m_postBSrvIndex, srvInc);
+        device->CreateShaderResourceView(m_postA.Get(), &srvDesc, cpuA);
+        device->CreateShaderResourceView(m_postB.Get(), &srvDesc, cpuB);
+
+        m_postASRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_postASrvIndex, srvInc);
+        m_postBSRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_postBSrvIndex, srvInc);
+    }
+
     CreateConstantBuffers();
 
     m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
-    m_particles->Initialize(1000, 1);
+    UINT particles = 1;
+    m_particles->Initialize(particles, particles);
 }
 
 void RenderingSystem::Update(float)
@@ -501,6 +563,8 @@ void RenderingSystem::Render()
     m_gbuffer->TransitionToReadable(cmd);
 
     DeferredPass();
+
+    PostProcessPass();
 
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -588,6 +652,10 @@ void RenderingSystem::UpdateUI()
         ImGui::RadioButton("Clamp", &postTonemap, 0); ImGui::SameLine();
         ImGui::RadioButton("Reinhard", &postTonemap, 1); ImGui::SameLine();
         ImGui::RadioButton("ACES", &postTonemap, 2);
+
+        ImGui::Checkbox("Enable tonemap", &m_enableTonemap);
+        ImGui::Checkbox("Enable gamma", &m_enableGamma);
+        ImGui::Checkbox("Enable vignette", &m_enableVignette);
 
         ImGui::End();
     }
@@ -762,12 +830,13 @@ void RenderingSystem::GeometryPass()
 
     const XMFLOAT3 fakeCamPos = { 0, 0, m_fakeCameraZ };
 
-    for (size_t i = 0; i < m_visibleObjects.size(); ++i) {
+    for (size_t i = 0; i < m_visibleObjects.size(); ++i) 
+    {
         SceneObject* obj = m_visibleObjects[i];
 
-        const float dist = XMVectorGetX(XMVector3Length(
-            XMLoadFloat3(&fakeCamPos) - XMLoadFloat3(&obj->position)));
+        const float dist = XMVectorGetX(XMVector3Length(XMLoadFloat3(&fakeCamPos) - XMLoadFloat3(&obj->position)));
         int lod = static_cast<int>(obj->lodDistances.size()) - 1;
+
         for (int j = 0; j + 1 < static_cast<int>(obj->lodDistances.size()); ++j) 
         {
             if (dist < obj->lodDistances[j + 1]) 
@@ -785,8 +854,7 @@ void RenderingSystem::GeometryPass()
         const bool useTess = (obj->texIdx[2] != errorTextures.height);
         if (useTess)
         {
-            cmd->SetPipelineState(m_wireframe ? m_pipeline.GetGBufferTessellationWireframePSO()
-                : m_pipeline.GetGBufferTessellationPSO());
+            cmd->SetPipelineState(m_wireframe ? m_pipeline.GetGBufferTessellationWireframePSO() : m_pipeline.GetGBufferTessellationPSO());
             cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
         }
         else 
@@ -865,24 +933,6 @@ void RenderingSystem::DeferredPass()
         );
         cmd->ResourceBarrier(1, &barrier);
     }
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = m_framework->GetCurrentRTVHandle();
-    cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
-    const float clearBB[4] = { 0,0,0,1 };
-    cmd->ClearRenderTargetView(rtv, clearBB, 0, nullptr);
-    m_framework->SetViewportAndScissors();
-
-    cmd->SetGraphicsRootSignature(m_pipeline.GetDeferredRS());
-    SetCommonHeaps();
-
-    cmd->SetGraphicsRootDescriptorTable(0, m_lightAccumSRV);
-
-    UpdatePostCB();
-    cmd->SetPipelineState(m_pipeline.GetPostPSO());
-    cmd->SetGraphicsRootConstantBufferView(1, m_postBuffer->GetGPUVirtualAddress());
-
-    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    cmd->DrawInstanced(3, 1, 0, 0);
 }
 
 void RenderingSystem::BuildLightViewProjCSM()
@@ -1142,4 +1192,95 @@ void RenderingSystem::RebuildOctree()
 
     if (!m_octree) m_octree = std::make_unique<Octree>();
     m_octree->Build(scene, items, 8, 8, 2.0f);
+}
+
+void RenderingSystem::PostProcessPass()
+{
+    cmd->SetGraphicsRootSignature(m_pipeline.GetPostRS());
+    SetCommonHeaps();
+    UpdatePostCB();
+
+    D3D12_GPU_DESCRIPTOR_HANDLE cur = m_lightAccumSRV;
+    bool useA = true;
+
+    auto takeDstRes = [&](bool a)->ID3D12Resource* { return a ? m_postA.Get() : m_postB.Get(); };
+    auto takeDstRTV = [&](bool a)->D3D12_CPU_DESCRIPTOR_HANDLE { return a ? m_postARTV : m_postBRTV;   };
+
+    auto doInter = [&](ID3D12PipelineState* pso) 
+        {
+            auto* dstRes = takeDstRes(useA);
+            auto  dstRTV = takeDstRTV(useA);
+            D3D12_GPU_DESCRIPTOR_HANDLE outSrv{};
+            ApplyPassToIntermediate(pso, cur, dstRes, dstRTV, outSrv);
+            cur = outSrv;
+            useA = !useA;
+        };
+
+    {
+        ID3D12PipelineState* pso = m_enableTonemap
+            ? m_pipeline.GetTonemapPSO()
+            : m_pipeline.GetCopyHDRtoLDRPSO();
+        doInter(pso);
+    }
+
+    {
+        ID3D12PipelineState* pso = m_enableGamma
+            ? m_pipeline.GetGammaPSO()
+            : m_pipeline.GetCopyLDRPSO();
+        doInter(pso);
+    }
+
+    {
+        ID3D12PipelineState* pso = m_enableVignette
+            ? m_pipeline.GetVignettePSO()
+            : m_pipeline.GetCopyLDRPSO();
+        ApplyPassToBackbuffer(pso, cur);
+    }
+}
+
+
+void RenderingSystem::ApplyPassToIntermediate( ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv, ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
+{
+    auto toRT = CD3DX12_RESOURCE_BARRIER::Transition(
+        dst, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    cmd->ResourceBarrier(1, &toRT);
+
+    cmd->OMSetRenderTargets(1, &dstRtv, FALSE, nullptr);
+    const float clear[4] = { 0,0,0,1 };
+    cmd->ClearRenderTargetView(dstRtv, clear, 0, nullptr);
+    m_framework->SetViewportAndScissors();
+
+    cmd->SetPipelineState(pso);
+    cmd->SetGraphicsRootDescriptorTable(0, inSrv);
+    cmd->SetGraphicsRootConstantBufferView(1, m_postBuffer->GetGPUVirtualAddress());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
+
+    auto toSRV = CD3DX12_RESOURCE_BARRIER::Transition(
+        dst, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &toSRV);
+
+    if (dst == m_postA.Get()) 
+    { 
+        outSrv = m_postASRV;
+    }
+    else
+    { 
+        outSrv = m_postBSRV;
+    }
+}
+
+void RenderingSystem::ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv)
+{
+    auto bbRtv = m_framework->GetCurrentRTVHandle();
+    cmd->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+    const float clear[4] = { 0,0,0,1 };
+    cmd->ClearRenderTargetView(bbRtv, clear, 0, nullptr);
+    m_framework->SetViewportAndScissors();
+
+    cmd->SetPipelineState(pso);
+    cmd->SetGraphicsRootDescriptorTable(0, inSrv);
+    cmd->SetGraphicsRootConstantBufferView(1, m_postBuffer->GetGPUVirtualAddress());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
 }

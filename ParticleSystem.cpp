@@ -97,7 +97,7 @@ void ParticleSystem::Initialize(UINT maxParticles, UINT initialSpawn)
     }
 
     {
-        Mesh plane = CreatePlane();
+        Mesh plane = CreateCube();
         const UINT vbSize = static_cast<UINT>(plane.vertices.size() * sizeof(Vertex));
         const UINT ibSize = static_cast<UINT>(plane.indices.size() * sizeof(uint32_t));
         if (vbSize == 0 || ibSize == 0) throw std::runtime_error("Particle mesh empty");

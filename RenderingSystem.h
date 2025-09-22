@@ -85,7 +85,7 @@ private:
     float m_currentFPS = 0.0f;
     float dt;
 
-    XMFLOAT3 direction = {-1.0f, -2.0f, -1.0f};
+    XMFLOAT3 direction = {50.0f, -50.0f, 0.0f};
     static constexpr UINT CSM_CASCADES = 4;
     XMFLOAT4X4 m_lightViewProjCSM[CSM_CASCADES];
     float m_cascadeSplits[CSM_CASCADES];
@@ -104,6 +104,18 @@ private:
     float postVignettePower = 2.0f;
     XMFLOAT2 postVignetteCenter{ 0.5f, 0.5f };
     int postTonemap = 2;
+
+    ComPtr<ID3D12Resource> m_postA;
+    ComPtr<ID3D12Resource> m_postB;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_postARTV{};
+    D3D12_CPU_DESCRIPTOR_HANDLE m_postBRTV{};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_postASRV{};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_postBSRV{};
+    UINT m_postASrvIndex = 0;
+    UINT m_postBSrvIndex = 0;
+    bool m_enableTonemap = true;
+    bool m_enableGamma = true;
+    bool m_enableVignette = true;
 
     struct IBLSet
     {
@@ -154,4 +166,8 @@ private:
     void RebuildOctree();
     static void ComputeLocalSphereFromMesh(const Mesh& m, XMFLOAT3& c, float& r);
     static AABB MakeWorldAABBFromSphere(const XMMATRIX& world, const XMFLOAT3& cLocal, float rLocal, const XMFLOAT3& scale);
+
+    void PostProcessPass();
+    void ApplyPassToIntermediate(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv, ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv);
+    void ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv);
 };

@@ -50,13 +50,18 @@ void Pipeline::Init()
     Compile(L"ParticlesCS.hlsl", L"CS_Update", L"cs_6_0", csUpdate);
     Compile(L"ParticlesCS.hlsl", L"CS_Emit", L"cs_6_0", csEmit);
 
-    ComPtr<IDxcBlob> psPost;
-    Compile(L"Shaders.hlsl", L"PS_Post", L"ps_6_0", psPost);
+    ComPtr<IDxcBlob> psTonemap, psGamma, psVignette, psCopyHDRtoLDR, psCopyLDR;
+    Compile(L"Shaders.hlsl", L"PS_Tonemap", L"ps_6_0", psTonemap);
+    Compile(L"Shaders.hlsl", L"PS_Gamma", L"ps_6_0", psGamma);
+    Compile(L"Shaders.hlsl", L"PS_Vignette", L"ps_6_0", psVignette);
+    Compile(L"Shaders.hlsl", L"PS_CopyHDRtoLDR", L"ps_6_0", psCopyHDRtoLDR);
+    Compile(L"Shaders.hlsl", L"PS_CopyLDR", L"ps_6_0", psCopyLDR);
 
     ComPtr<IDxcBlob> psSkybox;
     Compile(L"Shaders.hlsl", L"PS_Skybox", L"ps_6_0", psSkybox);
 
-    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+    D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
+    {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -326,11 +331,31 @@ void Pipeline::Init()
     csd.CS = { csEmit->GetBufferPointer(), csEmit->GetBufferSize() };
     ThrowIfFailed(m_framework->GetDevice()->CreateComputePipelineState(&csd, IID_PPV_ARGS(&m_particlesEmitCSO)));
 
+    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
+
+    CD3DX12_ROOT_PARAMETER params[2];
+    params[0].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
+    params[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+    D3D12_STATIC_SAMPLER_DESC staticSam{};
+    staticSam.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    staticSam.AddressU = staticSam.AddressV = staticSam.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    staticSam.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    staticSam.ShaderRegister = 0;
+
+    CD3DX12_ROOT_SIGNATURE_DESC rsDesc;
+    rsDesc.Init(_countof(params), params, 1, &staticSam,
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    ComPtr<ID3DBlob> sig, err;
+    ThrowIfFailed(D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err));
+    ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
+        IID_PPV_ARGS(&m_postRootSig)));
+
     D3D12_GRAPHICS_PIPELINE_STATE_DESC postDesc = {};
     postDesc.InputLayout = { nullptr, 0 };
     postDesc.pRootSignature = m_deferredRootSig.Get();
     postDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
-    postDesc.PS = { psPost->GetBufferPointer(), psPost->GetBufferSize() };
     postDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
     postDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     postDesc.DepthStencilState.DepthEnable = FALSE;
@@ -339,9 +364,39 @@ void Pipeline::Init()
     postDesc.NumRenderTargets = 1;
     postDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     postDesc.SampleDesc.Count = 1;
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
-        &postDesc, IID_PPV_ARGS(&m_postPSO)
-    ));
+
+    auto MakePostDesc = [&](IDxcBlob* ps)->D3D12_GRAPHICS_PIPELINE_STATE_DESC 
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC d = {};
+            d.InputLayout = { nullptr, 0 };
+            d.pRootSignature = m_postRootSig.Get();
+            d.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+            d.PS = { ps->GetBufferPointer(), ps->GetBufferSize() };
+            d.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+            d.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+            d.DepthStencilState.DepthEnable = FALSE;
+            d.SampleMask = UINT_MAX;
+            d.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            d.NumRenderTargets = 1;
+            d.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+            d.SampleDesc.Count = 1;
+            return d;
+        };
+
+    auto d1 = MakePostDesc(psTonemap.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&d1, IID_PPV_ARGS(&m_tonemapPSO)));
+
+    auto d2 = MakePostDesc(psGamma.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&d2, IID_PPV_ARGS(&m_gammaPSO)));
+
+    auto d3 = MakePostDesc(psVignette.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&d3, IID_PPV_ARGS(&m_vignettePSO)));
+
+    auto dc1 = MakePostDesc(psCopyHDRtoLDR.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dc1, IID_PPV_ARGS(&m_copyHDRtoLDRPSO)));
+
+    auto dc2 = MakePostDesc(psCopyLDR.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dc2, IID_PPV_ARGS(&m_copyLDRPSO)));
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC skyDesc = {};
     skyDesc.InputLayout = { nullptr, 0 };

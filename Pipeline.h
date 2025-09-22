@@ -30,6 +30,12 @@ public:
     ID3D12PipelineState* GetParticlesEmitCSO() const { return m_particlesEmitCSO.Get(); }
     ID3D12PipelineState* GetPostPSO() const { return m_postPSO.Get(); }
     ID3D12PipelineState* GetSkyPSO() const { return m_skyPSO.Get(); }
+    ID3D12PipelineState* GetTonemapPSO()  const { return m_tonemapPSO.Get(); }
+    ID3D12PipelineState* GetGammaPSO()    const { return m_gammaPSO.Get(); }
+    ID3D12PipelineState* GetVignettePSO() const { return m_vignettePSO.Get(); }
+    ID3D12RootSignature* GetPostRS() const { return m_postRootSig.Get(); }
+    ID3D12PipelineState* GetCopyHDRtoLDRPSO() const { return m_copyHDRtoLDRPSO.Get(); }
+    ID3D12PipelineState* GetCopyLDRPSO() const { return m_copyLDRPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -50,6 +56,12 @@ private:
     ComPtr<ID3D12PipelineState> m_particlesEmitCSO;
     ComPtr<ID3D12PipelineState> m_postPSO;
     ComPtr<ID3D12PipelineState> m_skyPSO;
+    ComPtr<ID3D12PipelineState> m_tonemapPSO;
+    ComPtr<ID3D12PipelineState> m_gammaPSO;
+    ComPtr<ID3D12PipelineState> m_vignettePSO;
+    ComPtr<ID3D12RootSignature> m_postRootSig;
+    ComPtr<ID3D12PipelineState> m_copyHDRtoLDRPSO;
+    ComPtr<ID3D12PipelineState> m_copyLDRPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };
