@@ -50,15 +50,25 @@ void Pipeline::Init()
     Compile(L"ParticlesCS.hlsl", L"CS_Update", L"cs_6_0", csUpdate);
     Compile(L"ParticlesCS.hlsl", L"CS_Emit", L"cs_6_0", csEmit);
 
-    ComPtr<IDxcBlob> psTonemap, psGamma, psVignette, psCopyHDRtoLDR, psCopyLDR;
-    Compile(L"Shaders.hlsl", L"PS_Tonemap", L"ps_6_0", psTonemap);
-    Compile(L"Shaders.hlsl", L"PS_Gamma", L"ps_6_0", psGamma);
-    Compile(L"Shaders.hlsl", L"PS_Vignette", L"ps_6_0", psVignette);
-    Compile(L"Shaders.hlsl", L"PS_CopyHDRtoLDR", L"ps_6_0", psCopyHDRtoLDR);
-    Compile(L"Shaders.hlsl", L"PS_CopyLDR", L"ps_6_0", psCopyLDR);
-
     ComPtr<IDxcBlob> psSkybox;
     Compile(L"Shaders.hlsl", L"PS_Skybox", L"ps_6_0", psSkybox);
+
+    ComPtr<IDxcBlob> psCopyHDRtoLDR, psCopyLDR;
+    ComPtr<IDxcBlob> psTonemap, psGamma, psVignette;
+    ComPtr<IDxcBlob> psInvert, psGrayscale, psPixelate, psPosterize, psSaturation;
+
+    Compile(L"PostEffects.hlsl", L"PS_CopyHDRtoLDR", L"ps_6_0", psCopyHDRtoLDR);
+    Compile(L"PostEffects.hlsl", L"PS_CopyLDR", L"ps_6_0", psCopyLDR);
+
+    Compile(L"PostEffects.hlsl", L"PS_Tonemap", L"ps_6_0", psTonemap);
+    Compile(L"PostEffects.hlsl", L"PS_Gamma", L"ps_6_0", psGamma);
+    Compile(L"PostEffects.hlsl", L"PS_Vignette", L"ps_6_0", psVignette);
+
+    Compile(L"PostEffects.hlsl", L"PS_Invert", L"ps_6_0", psInvert);
+    Compile(L"PostEffects.hlsl", L"PS_Grayscale", L"ps_6_0", psGrayscale);
+    Compile(L"PostEffects.hlsl", L"PS_Pixelate", L"ps_6_0", psPixelate);
+    Compile(L"PostEffects.hlsl", L"PS_Posterize", L"ps_6_0", psPosterize);
+    Compile(L"PostEffects.hlsl", L"PS_Saturation", L"ps_6_0", psSaturation);
 
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
     {
@@ -383,20 +393,28 @@ void Pipeline::Init()
             return d;
         };
 
-    auto d1 = MakePostDesc(psTonemap.Get());
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&d1, IID_PPV_ARGS(&m_tonemapPSO)));
+    auto dCopyHDR = MakePostDesc(psCopyHDRtoLDR.Get());
+    auto dCopyLDR = MakePostDesc(psCopyLDR.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dCopyHDR, IID_PPV_ARGS(&m_copyHDRtoLDRPSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dCopyLDR, IID_PPV_ARGS(&m_copyLDRPSO)));
 
-    auto d2 = MakePostDesc(psGamma.Get());
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&d2, IID_PPV_ARGS(&m_gammaPSO)));
+    auto dTone = MakePostDesc(psTonemap.Get());
+    auto dGam = MakePostDesc(psGamma.Get());
+    auto dVin = MakePostDesc(psVignette.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dTone, IID_PPV_ARGS(&m_tonemapPSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dGam, IID_PPV_ARGS(&m_gammaPSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dVin, IID_PPV_ARGS(&m_vignettePSO)));
 
-    auto d3 = MakePostDesc(psVignette.Get());
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&d3, IID_PPV_ARGS(&m_vignettePSO)));
-
-    auto dc1 = MakePostDesc(psCopyHDRtoLDR.Get());
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dc1, IID_PPV_ARGS(&m_copyHDRtoLDRPSO)));
-
-    auto dc2 = MakePostDesc(psCopyLDR.Get());
-    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dc2, IID_PPV_ARGS(&m_copyLDRPSO)));
+    auto dInv = MakePostDesc(psInvert.Get());
+    auto dGry = MakePostDesc(psGrayscale.Get());
+    auto dPix = MakePostDesc(psPixelate.Get());
+    auto dPos = MakePostDesc(psPosterize.Get());
+    auto dSat = MakePostDesc(psSaturation.Get());
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dInv, IID_PPV_ARGS(&m_invertPSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dGry, IID_PPV_ARGS(&m_grayscalePSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dPix, IID_PPV_ARGS(&m_pixelatePSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dPos, IID_PPV_ARGS(&m_posterizePSO)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&dSat, IID_PPV_ARGS(&m_saturationPSO)));
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC skyDesc = {};
     skyDesc.InputLayout = { nullptr, 0 };

@@ -36,6 +36,11 @@ public:
     ID3D12RootSignature* GetPostRS() const { return m_postRootSig.Get(); }
     ID3D12PipelineState* GetCopyHDRtoLDRPSO() const { return m_copyHDRtoLDRPSO.Get(); }
     ID3D12PipelineState* GetCopyLDRPSO() const { return m_copyLDRPSO.Get(); }
+    ID3D12PipelineState* GetInvertPSO() const { return m_invertPSO.Get(); }
+    ID3D12PipelineState* GetGrayscalePSO() const { return m_grayscalePSO.Get(); }
+    ID3D12PipelineState* GetPixelatePSO() const { return m_pixelatePSO.Get(); }
+    ID3D12PipelineState* GetPosterizePSO() const { return m_posterizePSO.Get(); }
+    ID3D12PipelineState* GetSaturationPSO() const { return m_saturationPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -62,6 +67,11 @@ private:
     ComPtr<ID3D12RootSignature> m_postRootSig;
     ComPtr<ID3D12PipelineState> m_copyHDRtoLDRPSO;
     ComPtr<ID3D12PipelineState> m_copyLDRPSO;
+    ComPtr<ID3D12PipelineState> m_invertPSO;
+    ComPtr<ID3D12PipelineState> m_grayscalePSO;
+    ComPtr<ID3D12PipelineState> m_pixelatePSO;
+    ComPtr<ID3D12PipelineState> m_posterizePSO;
+    ComPtr<ID3D12PipelineState> m_saturationPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

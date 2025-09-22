@@ -113,9 +113,18 @@ private:
     D3D12_GPU_DESCRIPTOR_HANDLE m_postBSRV{};
     UINT m_postASrvIndex = 0;
     UINT m_postBSrvIndex = 0;
+
     bool m_enableTonemap = true;
     bool m_enableGamma = true;
     bool m_enableVignette = true;
+    bool m_enableInvert = false;
+    bool m_enableGrayscale = false;
+    bool m_enablePixelate = false;
+    bool m_enablePosterize = false;
+    bool m_enableSaturation = false;
+    float pixelateSize = 1.0f;
+    float posterizeLevels = 2.0f;
+    float saturation = 1.0f;
 
     struct IBLSet
     {

@@ -61,6 +61,27 @@ struct MaterialCB
     float _padM;
 };
 
+struct PostCB
+{
+    float Exposure;
+    float Gamma;
+    float VignetteStrength;
+    float VignettePower;
+
+    XMFLOAT2 VignetteCenter;
+    XMFLOAT2 InvResolution;
+
+    int   Tonemap;
+    int   _padPost;       
+    float Saturation;     
+    float PosterizeLevels;
+
+    float PixelateSize;
+    float _pad2;       
+    float _pad3;       
+    float _pad4;       
+};
+
 struct ErrorTextures {
     UINT white{};
     UINT roughness{};
@@ -122,8 +143,8 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            //"Assets\\SponzaCrytek\\sponza.obj", 
-            "Assets\\TestPBR\\TestPBR.obj", 
+            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
             //"Assets\\LOD\\bunnyLOD1.obj", 
@@ -133,7 +154,7 @@ void RenderingSystem::SetObjects()
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 1.1f;
+    m_objectScale = 0.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -203,8 +224,8 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
 
@@ -438,7 +459,6 @@ void RenderingSystem::Initialize()
         const auto rtvHeapDesc = rtvHeap->GetDesc();
         const UINT last = rtvHeapDesc.NumDescriptors - 1;
 
-        // 1) Создаём два LDR ping-pong таргета
         CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
         CD3DX12_RESOURCE_DESC ldrDesc = CD3DX12_RESOURCE_DESC::Tex2D(
             DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -657,6 +677,15 @@ void RenderingSystem::UpdateUI()
         ImGui::Checkbox("Enable gamma", &m_enableGamma);
         ImGui::Checkbox("Enable vignette", &m_enableVignette);
 
+        ImGui::Checkbox("Invert", &m_enableInvert);
+        ImGui::Checkbox("Grayscale", &m_enableGrayscale);
+        ImGui::Checkbox("Pixelate", &m_enablePixelate);
+        ImGui::SliderFloat("Pixelate Size", &pixelateSize, 1.0f, 64.0f);
+        ImGui::Checkbox("Posterize", &m_enablePosterize);
+        ImGui::SliderFloat("Posterize Levels", &posterizeLevels, 2.0f, 32.0f);
+        ImGui::Checkbox("Saturation", &m_enableSaturation);
+        ImGui::SliderFloat("Saturation Value", &saturation, 0.0f, 2.5f);
+
         ImGui::End();
     }
 }
@@ -788,22 +817,20 @@ void RenderingSystem::UpdateLightCB()
 
 void RenderingSystem::UpdatePostCB()
 {
-    struct PostCBData 
-    {
-        float Exposure, Gamma, VignetteStrength, VignettePower;
-        float VignetteCenterX, VignetteCenterY, InvW, InvH;
-        int   Tonemap; int pad[3];
-    } d{};
+    PostCB d{};
 
     d.Exposure = postExposure;
     d.Gamma = postGamma;
     d.VignetteStrength = postVignetteStrength;
     d.VignettePower = postVignettePower;
-    d.VignetteCenterX = postVignetteCenter.x;
-    d.VignetteCenterY = postVignetteCenter.y;
-    d.InvW = 1.0f / m_framework->GetWidth();
-    d.InvH = 1.0f / m_framework->GetHeight();
+    d.VignetteCenter.x = postVignetteCenter.x;
+    d.VignetteCenter.y = postVignetteCenter.y;
+    d.InvResolution.x = 1.0f / m_framework->GetWidth();
+    d.InvResolution.y = 1.0f / m_framework->GetHeight();
     d.Tonemap = postTonemap;
+    d.Saturation = saturation;
+    d.PixelateSize = pixelateSize;
+    d.PosterizeLevels = posterizeLevels;
 
     memcpy(m_pPostData, &d, sizeof(d));
 }
@@ -1206,7 +1233,7 @@ void RenderingSystem::PostProcessPass()
     auto takeDstRes = [&](bool a)->ID3D12Resource* { return a ? m_postA.Get() : m_postB.Get(); };
     auto takeDstRTV = [&](bool a)->D3D12_CPU_DESCRIPTOR_HANDLE { return a ? m_postARTV : m_postBRTV;   };
 
-    auto doInter = [&](ID3D12PipelineState* pso) 
+    auto doInter = [&](ID3D12PipelineState* pso)
         {
             auto* dstRes = takeDstRes(useA);
             auto  dstRTV = takeDstRTV(useA);
@@ -1216,28 +1243,29 @@ void RenderingSystem::PostProcessPass()
             useA = !useA;
         };
 
-    {
-        ID3D12PipelineState* pso = m_enableTonemap
-            ? m_pipeline.GetTonemapPSO()
-            : m_pipeline.GetCopyHDRtoLDRPSO();
-        doInter(pso);
-    }
+    std::vector<ID3D12PipelineState*> passes;
+    passes.push_back(m_enableTonemap ? m_pipeline.GetTonemapPSO()
+        : m_pipeline.GetCopyHDRtoLDRPSO());
 
-    {
-        ID3D12PipelineState* pso = m_enableGamma
-            ? m_pipeline.GetGammaPSO()
-            : m_pipeline.GetCopyLDRPSO();
-        doInter(pso);
-    }
+    passes.push_back(m_enableGamma ? m_pipeline.GetGammaPSO()
+        : m_pipeline.GetCopyLDRPSO());
 
+    if (m_enableInvert)     passes.push_back(m_pipeline.GetInvertPSO());
+    if (m_enableGrayscale)  passes.push_back(m_pipeline.GetGrayscalePSO());
+    if (m_enablePixelate)   passes.push_back(m_pipeline.GetPixelatePSO());
+    if (m_enablePosterize)  passes.push_back(m_pipeline.GetPosterizePSO());
+    if (m_enableSaturation) passes.push_back(m_pipeline.GetSaturationPSO());
+
+    passes.push_back(m_enableVignette ? m_pipeline.GetVignettePSO()
+        : m_pipeline.GetCopyLDRPSO());
+
+    for (size_t i = 0; i < passes.size(); ++i)
     {
-        ID3D12PipelineState* pso = m_enableVignette
-            ? m_pipeline.GetVignettePSO()
-            : m_pipeline.GetCopyLDRPSO();
-        ApplyPassToBackbuffer(pso, cur);
+        bool last = (i + 1 == passes.size());
+        if (last) ApplyPassToBackbuffer(passes[i], cur);
+        else      doInter(passes[i]);
     }
 }
-
 
 void RenderingSystem::ApplyPassToIntermediate( ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv, ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
 {
