@@ -140,7 +140,7 @@ void ParticleSystem::Initialize(UINT maxParticles, UINT initialSpawn)
     {
         D3D12_DESCRIPTOR_HEAP_DESC hd = {};
         hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        hd.NumDescriptors = 2;
+        hd.NumDescriptors = 3;
         hd.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         ThrowIfFailed(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&m_computeHeap)));
 
@@ -165,9 +165,9 @@ void ParticleSystem::Initialize(UINT maxParticles, UINT initialSpawn)
         cb.accel[2] = 0.0f;
         cb.spawnCount = m_initialSpawn;
         cb.emitterPos[0] = 0.0f;
-        cb.emitterPos[1] = 50.0f;
+        cb.emitterPos[1] = 100.0f;
         cb.emitterPos[2] = 0.0f;
-        cb.initialSpeed = 10.0f;
+        cb.initialSpeed = 8.0f;
         cb.aliveCount = 0u;
 
         memcpy(m_updatePtr, &cb, sizeof(cb));
@@ -262,33 +262,52 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
     ThrowIfFailed(m_framework->GetCommandList()->Reset(alloc, nullptr));
     cmd = m_framework->GetCommandList();
 
-    if (m_aliveCount > 0)
     {
-        UpdateCB cb{};
-        cb.dt = dt;
-        cb.accel[0] = 0.0f;
-        cb.accel[1] = 0.0f;
-        cb.accel[2] = 0.0f;
-        cb.spawnCount = 0;
-        cb.emitterPos[0] = 0.0f;
-        cb.emitterPos[1] = 50.0f;
-        cb.emitterPos[2] = 0.0f;
-        cb.initialSpeed = 0.0f;
-        cb.aliveCount = m_aliveCount;
-        memcpy(m_updatePtr, &cb, sizeof(cb));
+        SceneCB scb = m_sceneCBHost;
+        scb.ViewProj = m_viewProj;
+        scb.InvViewProj = m_invViewProj;
+        scb.ScreenSize[0] = (float)m_screenW;
+        scb.ScreenSize[1] = (float)m_screenH;
+        scb.CollisionEps = 0.001f;
 
-        WriteUavDescriptors(srcBuf, srcCnt, dstBuf, dstCnt);
+        uint8_t* p = nullptr; CD3DX12_RANGE r(0, 0);
+        m_sceneCB->Map(0, &r, reinterpret_cast<void**>(&p));
+        memcpy(p, &scb, sizeof(scb));
+        CD3DX12_RANGE wr(0, 0); m_sceneCB->Unmap(0, &wr);
+    }
+
+    UpdateCB cb{};
+    cb.dt = dt;
+    cb.accel[0] = 0.0f;
+    cb.accel[1] = -10.0f;
+    cb.accel[2] = 0.0f;
+    cb.spawnCount = 0;
+    cb.emitterPos[0] = 0.0f;
+    cb.emitterPos[1] = 0.0f;
+    cb.emitterPos[2] = 0.0f;
+    cb.initialSpeed = 1.0f;
+    cb.aliveCount = m_aliveCount;
+    memcpy(m_updatePtr, &cb, sizeof(cb));
+
+    WriteUavDescriptors(srcBuf, srcCnt, dstBuf, dstCnt);
+
+    {
+        auto gpu0 = m_computeHeap->GetGPUDescriptorHandleForHeapStart();
+        auto depthGpu = CD3DX12_GPU_DESCRIPTOR_HANDLE(gpu0, 2, m_dhInc);
 
         ID3D12DescriptorHeap* heaps[] = { m_computeHeap.Get() };
         cmd->SetDescriptorHeaps(1, heaps);
         cmd->SetComputeRootSignature(m_pipeline->GetParticlesComputeRS());
         cmd->SetPipelineState(m_pipeline->GetParticlesUpdateCSO());
+
         cmd->SetComputeRootDescriptorTable(0, m_gpuBase);
         cmd->SetComputeRootConstantBufferView(1, m_updateCB->GetGPUVirtualAddress());
+        cmd->SetComputeRootDescriptorTable(2, depthGpu);
+        cmd->SetComputeRootConstantBufferView(3, m_sceneCB->GetGPUVirtualAddress());
 
         const UINT threads = 256;
         const UINT groups = (m_aliveCount + threads - 1) / threads;
-        cmd->Dispatch(groups, 1, 1);
+        if (groups) cmd->Dispatch(groups, 1, 1);
     }
 
     CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::UAV(nullptr);
@@ -315,4 +334,31 @@ void ParticleSystem::DrawGBuffer(ID3D12GraphicsCommandList* cmd)
     cmd->SetGraphicsRootShaderResourceView(6, readBuf->GetGPUVirtualAddress());
 
     cmd->DrawIndexedInstanced(m_indexCount, m_aliveCount, 0, 0, 0);
+}
+
+void ParticleSystem::EnableDepthCollisions(ID3D12Resource* depth, UINT w, UINT h)
+{
+    m_depth = depth; m_screenW = w; m_screenH = h;
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC ds{};
+    ds.Format = DXGI_FORMAT_R32_FLOAT;
+    ds.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    ds.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    ds.Texture2D.MipLevels = 1;
+
+    auto cpu0 = m_computeHeap->GetCPUDescriptorHandleForHeapStart();
+    auto cpuDepth = CD3DX12_CPU_DESCRIPTOR_HANDLE(cpu0, 2, m_dhInc);
+    m_framework->GetDevice()->CreateShaderResourceView(m_depth.Get(), &ds, cpuDepth);
+
+    CD3DX12_HEAP_PROPERTIES up(D3D12_HEAP_TYPE_UPLOAD);
+    auto cbDesc = CD3DX12_RESOURCE_DESC::Buffer(Align256(sizeof(SceneCB)));
+    ThrowIfFailed(m_framework->GetDevice()->CreateCommittedResource(
+        &up, D3D12_HEAP_FLAG_NONE, &cbDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_sceneCB)));
+}
+
+void ParticleSystem::SetCameraMatrices(const XMMATRIX& vp, const XMMATRIX& ivp)
+{
+    XMStoreFloat4x4(&m_viewProj, vp);
+    XMStoreFloat4x4(&m_invViewProj, ivp);
 }

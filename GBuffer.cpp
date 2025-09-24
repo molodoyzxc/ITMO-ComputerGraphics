@@ -79,7 +79,7 @@ void GBuffer::CreateResources()
     ThrowIfFailed(m_framework->GetDevice()->CreateCommittedResource(
         &heapDefault, D3D12_HEAP_FLAG_NONE, &depthDesc,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-        &clearDS, IID_PPV_ARGS(&m_depth))); 
+        &clearDS, IID_PPV_ARGS(&m_depth)));
 }
 
 void GBuffer::CreateDescriptors()
@@ -139,47 +139,44 @@ void GBuffer::CreateDescriptors()
     m_framework->GetDevice()->CreateShaderResourceView(m_depth.Get(), &dsDesc, cpuDS);
 }
 
-void GBuffer::Bind(ID3D12GraphicsCommandList* cmd) 
+void GBuffer::Bind(ID3D12GraphicsCommandList* cmd)
 {
-    D3D12_RESOURCE_BARRIER barriers[4] = {
-        CD3DX12_RESOURCE_BARRIER::Transition(m_rtAlbedo.Get(),
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_RENDER_TARGET),
-        CD3DX12_RESOURCE_BARRIER::Transition(m_rtNormal.Get(),
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_RENDER_TARGET),
-        CD3DX12_RESOURCE_BARRIER::Transition(m_rtMaterial.Get(),
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_RENDER_TARGET),
-        CD3DX12_RESOURCE_BARRIER::Transition(m_depth.Get(),
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_DEPTH_WRITE)
-    };
-    cmd->ResourceBarrier(4, barriers);
+    D3D12_RESOURCE_BARRIER bars[4];
+    int n = 0;
 
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] = 
+    bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_rtAlbedo.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_rtNormal.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_rtMaterial.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    if (m_depthState != D3D12_RESOURCE_STATE_DEPTH_WRITE)
     {
-        CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
-            m_rtvStartIndex, m_rtvDescriptorSize),
-        CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
-            m_rtvStartIndex + 1, m_rtvDescriptorSize),
-        CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
-            m_rtvStartIndex + 2, m_rtvDescriptorSize)
+        bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_depth.Get(), m_depthState, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        m_depthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    }
+
+    if (n) cmd->ResourceBarrier(n, bars);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[] =
+    {
+        CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_rtvStartIndex, m_rtvDescriptorSize),
+        CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_rtvStartIndex + 1, m_rtvDescriptorSize),
+        CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_rtvStartIndex + 2, m_rtvDescriptorSize)
     };
     CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(m_framework->GetDSVHandle());
     cmd->OMSetRenderTargets(_countof(rtvs), rtvs, FALSE, &dsv);
 }
 
-void GBuffer::Clear(ID3D12GraphicsCommandList* cmd, const FLOAT clearColor[4]) 
+void GBuffer::Clear(ID3D12GraphicsCommandList* cmd, const FLOAT clearColor[4])
 {
     for (UINT i = 0; i < 3; ++i)
     {
-        auto rtv = CD3DX12_CPU_DESCRIPTOR_HANDLE(
-            m_rtvHeap->GetCPUDescriptorHandleForHeapStart(),
-            m_rtvStartIndex + i, m_rtvDescriptorSize);
+        auto rtv = CD3DX12_CPU_DESCRIPTOR_HANDLE(m_rtvHeap->GetCPUDescriptorHandleForHeapStart(), m_rtvStartIndex + i, m_rtvDescriptorSize);
         cmd->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
     }
-
     CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(m_framework->GetDSVHandle());
     cmd->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 }
@@ -197,11 +194,25 @@ std::vector<D3D12_GPU_DESCRIPTOR_HANDLE> GBuffer::GetSRVs() const
 
 void GBuffer::TransitionToReadable(ID3D12GraphicsCommandList* cmd)
 {
-    D3D12_RESOURCE_BARRIER barriers[4] = {
-        CD3DX12_RESOURCE_BARRIER::Transition(m_rtAlbedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-        CD3DX12_RESOURCE_BARRIER::Transition(m_rtNormal.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-        CD3DX12_RESOURCE_BARRIER::Transition(m_rtMaterial.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-        CD3DX12_RESOURCE_BARRIER::Transition(m_depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
-    };
-    cmd->ResourceBarrier(4, barriers);
+    D3D12_RESOURCE_BARRIER bars[4];
+    int n = 0;
+
+    bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_rtAlbedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_rtNormal.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_rtMaterial.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    const D3D12_RESOURCE_STATES kReadable =
+        D3D12_RESOURCE_STATE_GENERIC_READ;
+
+    if (m_depthState != kReadable)
+    {
+        bars[n++] = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_depth.Get(), m_depthState, kReadable);
+        m_depthState = kReadable;
+    }
+
+    if (n) cmd->ResourceBarrier(n, bars);
 }

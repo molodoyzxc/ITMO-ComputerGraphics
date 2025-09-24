@@ -307,9 +307,13 @@ void Pipeline::Init()
     psoGP.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
     psoGP.SampleMask = UINT_MAX;
     psoGP.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    
     psoGP.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    psoGP.DepthStencilState.DepthEnable = TRUE;
+    psoGP.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    psoGP.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+
     psoGP.InputLayout = { inputLayout, _countof(inputLayout) };
-    psoGP.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
     psoGP.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoGP.NumRenderTargets = 3;
     psoGP.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -321,20 +325,30 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &psoGP, IID_PPV_ARGS(&m_gbufferParticlesPSO)));
 
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &psoGP, IID_PPV_ARGS(&m_gbufferParticlesPSO)));
+
     CD3DX12_DESCRIPTOR_RANGE uavRange;
     uavRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0);
 
-    CD3DX12_ROOT_PARAMETER crp[2];
-    crp[0].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
-    crp[1].InitAsConstantBufferView(5, D3D12_SHADER_VISIBILITY_ALL);        
+    CD3DX12_DESCRIPTOR_RANGE srvDepthRange;
+    srvDepthRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2, 0);
+
+    CD3DX12_ROOT_PARAMETER cParams[4];
+    cParams[0].InitAsDescriptorTable(1, &uavRange, D3D12_SHADER_VISIBILITY_ALL);
+    cParams[1].InitAsConstantBufferView(5, 0, D3D12_SHADER_VISIBILITY_ALL);
+    cParams[2].InitAsDescriptorTable(1, &srvDepthRange, D3D12_SHADER_VISIBILITY_ALL);
+    cParams[3].InitAsConstantBufferView(6, 0, D3D12_SHADER_VISIBILITY_ALL);
 
     CD3DX12_ROOT_SIGNATURE_DESC csDesc;
-    csDesc.Init(_countof(crp), crp, 0, nullptr);
+    csDesc.Init(_countof(cParams), cParams, 0, nullptr,
+        D3D12_ROOT_SIGNATURE_FLAG_NONE);
 
     ComPtr<ID3DBlob> sigBlob, sigErr;
     ThrowIfFailed(D3D12SerializeRootSignature(&csDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &sigErr));
     ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(
-        0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&m_particlesComputeRS)));
+        0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(),
+        IID_PPV_ARGS(&m_particlesComputeRS)));
 
     D3D12_COMPUTE_PIPELINE_STATE_DESC csd = {};
     csd.pRootSignature = m_particlesComputeRS.Get();
@@ -363,19 +377,6 @@ void Pipeline::Init()
     ThrowIfFailed(D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err));
     ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(),
         IID_PPV_ARGS(&m_postRootSig)));
-
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC postDesc = {};
-    postDesc.InputLayout = { nullptr, 0 };
-    postDesc.pRootSignature = m_deferredRootSig.Get();
-    postDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
-    postDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    postDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-    postDesc.DepthStencilState.DepthEnable = FALSE;
-    postDesc.SampleMask = UINT_MAX;
-    postDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    postDesc.NumRenderTargets = 1;
-    postDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-    postDesc.SampleDesc.Count = 1;
 
     auto MakePostDesc = [&](IDxcBlob* ps)->D3D12_GRAPHICS_PIPELINE_STATE_DESC 
         {

@@ -42,6 +42,9 @@ public:
         }
     }
 
+    void EnableDepthCollisions(ID3D12Resource* depth, UINT width, UINT height);
+    void SetCameraMatrices(const XMMATRIX& viewProj, const XMMATRIX& invViewProj);
+
 private:
     static UINT Align256(UINT x) { return (x + 255u) & ~255u; }
 
@@ -63,6 +66,14 @@ private:
 private:
     DX12Framework* m_framework = nullptr;
     Pipeline* m_pipeline = nullptr;
+
+    struct SceneCB
+    {
+        DirectX::XMFLOAT4X4 ViewProj;
+        DirectX::XMFLOAT4X4 InvViewProj;
+        float ScreenSize[2];
+        float CollisionEps;
+    };
 
     UINT m_maxParticles = 0;
     UINT m_aliveCount = 0;
@@ -98,4 +109,13 @@ private:
     D3D12_VERTEX_BUFFER_VIEW m_vbv{};
     D3D12_INDEX_BUFFER_VIEW  m_ibv{};
     UINT m_indexCount = 0;
+
+    ComPtr<ID3D12Resource> m_depth;
+    D3D12_RESOURCE_STATES m_depthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    UINT m_screenW = 0, m_screenH = 0;
+
+    XMFLOAT4X4 m_viewProj{};
+    XMFLOAT4X4 m_invViewProj{};
+    ComPtr<ID3D12Resource> m_sceneCB;
+    SceneCB m_sceneCBHost{};
 };

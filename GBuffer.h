@@ -24,6 +24,9 @@ public:
 
     void TransitionToReadable(ID3D12GraphicsCommandList* cmd);
 
+    ID3D12Resource* GetDepthResource() const { return m_depth.Get(); }
+
+
 private:
     void CreateResources();
     void CreateDescriptors();
@@ -45,4 +48,6 @@ private:
     UINT m_srvNormalIndex;
     UINT m_srvMaterialIndex;
     UINT depthSrvIndex;
+
+    D3D12_RESOURCE_STATES m_depthState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 };

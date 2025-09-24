@@ -63,8 +63,8 @@ private:
     XMFLOAT4X4 m_lightViewProj;
 
     float m_yaw = 0.f;
-    float m_pitch = 0.f;
-    XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
+    float m_pitch = 0.f;    
+    XMFLOAT3 cameraPos{ 0.0f, 0.0f, -1.0f };
     float m_near = 0.1f;
     float m_far = 5000.0f;
 

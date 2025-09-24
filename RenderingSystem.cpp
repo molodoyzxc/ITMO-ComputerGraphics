@@ -145,13 +145,14 @@ void RenderingSystem::SetObjects()
     (
         {
             //"Assets\\SponzaCrytek\\sponza.obj", 
-            "Assets\\TestPBR\\TestPBR.obj", 
+            //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
             //"Assets\\LOD\\bunnyLOD1.obj", 
             //"Assets\\LOD\\bunnyLOD2.obj", 
             //"Assets\\LOD\\bunnyLOD3.obj", 
-            //"Assets\\TestShadows\\wall.obj", 
+            "Assets\\TestShadows\\wall.obj", 
+            //"Assets\\TestShadows\\floor.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
@@ -227,10 +228,10 @@ void RenderingSystem::LoadTextures()
     uploadBatch.Begin();
 
     //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
-    //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
+    std::filesystem::path sceneFolder = L"Assets\\TestShadows";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -365,6 +366,22 @@ void RenderingSystem::Initialize()
         m_framework->GetSrvHeap(), m_framework->GetSrvDescriptorSize()
     );
     m_gbuffer->Initialize();
+    
+    auto* allocator = m_framework->GetCommandAllocator();
+    ThrowIfFailed(allocator->Reset());
+    ID3D12GraphicsCommandList* initCmd = nullptr;
+    ThrowIfFailed(m_framework->GetDevice()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&initCmd)));
+
+    m_gbuffer->Bind(initCmd);
+    const FLOAT clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    m_gbuffer->Clear(initCmd, clearColor);
+    m_gbuffer->TransitionToReadable(initCmd);
+
+    ThrowIfFailed(initCmd->Close());
+    ID3D12CommandList* initLists[] = { initCmd };
+    m_framework->GetCommandQueue()->ExecuteCommandLists(1, initLists);
+    m_framework->WaitForGpu();
+    initCmd->Release();
 
     m_shadow = std::make_unique<ShadowMap>(m_framework, 2048 * 6, CSM_CASCADES);
     m_shadow->Initialize();
@@ -542,6 +559,13 @@ void RenderingSystem::Initialize()
     m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
     UINT particles = 10000;
     m_particles->Initialize(particles, particles);
+
+    m_particles->EnableDepthCollisions
+    (
+        m_gbuffer->GetDepthResource(),
+        (UINT)m_framework->GetWidth(),
+        (UINT)m_framework->GetHeight()
+    );
 }
 
 void RenderingSystem::Update(float)
@@ -583,15 +607,17 @@ void RenderingSystem::Render()
 
     BuildViewProj();
 
+    XMMATRIX invVP = XMMatrixInverse(nullptr, viewProj);
+
     m_particles->UpdateViewProj(viewProj);
 
+    m_particles->SetCameraMatrices(viewProj, invVP);
+        
     ExtractVisibleObjects();
     UpdatePerObjectCBs();
     UpdateTessellationCB();
 
     ShadowPass();
-
-    m_particles->Simulate(cmd, dt);
 
     m_gbuffer->Bind(cmd);
     const float clearG[4] = { 0.2f, 0.2f, 1.0f, 0.0f };
@@ -601,9 +627,17 @@ void RenderingSystem::Render()
     GeometryPass();
 
     m_gbuffer->TransitionToReadable(cmd);
+    m_particles->Simulate(cmd, dt);
+
+    cmd = m_framework->GetCommandList();
+
+    m_gbuffer->Bind(cmd);
+    m_framework->SetViewportAndScissors();
+    m_particles->DrawGBuffer(cmd);
+
+    m_gbuffer->TransitionToReadable(cmd);
 
     DeferredPass();
-
     PostProcessPass();
 
     ImGui::Render();
@@ -928,8 +962,6 @@ void RenderingSystem::GeometryPass()
         cmd->IASetIndexBuffer(&obj->lodIBs[lod]);
         cmd->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
     }
-
-    m_particles->DrawGBuffer(cmd);
 }
 
 void RenderingSystem::DeferredPass()
@@ -1273,10 +1305,10 @@ void RenderingSystem::PostProcessPass()
     passes.push_back(m_enableGamma ? m_pipeline.GetGammaPSO()
         : m_pipeline.GetCopyLDRPSO());
 
-    if (m_enableInvert)     passes.push_back(m_pipeline.GetInvertPSO());
-    if (m_enableGrayscale)  passes.push_back(m_pipeline.GetGrayscalePSO());
-    if (m_enablePixelate)   passes.push_back(m_pipeline.GetPixelatePSO());
-    if (m_enablePosterize)  passes.push_back(m_pipeline.GetPosterizePSO());
+    if (m_enableInvert) passes.push_back(m_pipeline.GetInvertPSO());
+    if (m_enableGrayscale) passes.push_back(m_pipeline.GetGrayscalePSO());
+    if (m_enablePixelate) passes.push_back(m_pipeline.GetPixelatePSO());
+    if (m_enablePosterize) passes.push_back(m_pipeline.GetPosterizePSO());
     if (m_enableSaturation) passes.push_back(m_pipeline.GetSaturationPSO());
 
     passes.push_back(m_enableVignette ? m_pipeline.GetVignettePSO()
