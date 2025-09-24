@@ -145,13 +145,13 @@ void RenderingSystem::SetObjects()
     (
         {
             //"Assets\\SponzaCrytek\\sponza.obj", 
-            //"Assets\\TestPBR\\TestPBR.obj", 
+            "Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
             //"Assets\\LOD\\bunnyLOD1.obj", 
             //"Assets\\LOD\\bunnyLOD2.obj", 
             //"Assets\\LOD\\bunnyLOD3.obj", 
-            "Assets\\TestShadows\\wall.obj", 
+            //"Assets\\TestShadows\\wall.obj", 
             //"Assets\\TestShadows\\floor.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
@@ -228,10 +228,10 @@ void RenderingSystem::LoadTextures()
     uploadBatch.Begin();
 
     //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
-    std::filesystem::path sceneFolder = L"Assets\\TestShadows";
+    //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -349,6 +349,20 @@ void RenderingSystem::CreateConstantBuffers()
         ));
         CD3DX12_RANGE rr(0, 0);
         m_postBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pPostData));
+    }
+
+    {
+        m_previewCBStride = Align256(sizeof(PreviewCB));
+        const UINT previewCount = 6;
+        const UINT previewSize = m_previewCBStride * previewCount;
+
+        CD3DX12_HEAP_PROPERTIES uploadHeap(D3D12_HEAP_TYPE_UPLOAD);
+        CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(previewSize);
+        ThrowIfFailed(m_framework->GetDevice()->CreateCommittedResource(
+            &uploadHeap, D3D12_HEAP_FLAG_NONE, &bufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_previewBuffer)
+        ));
+        m_previewBuffer->Map(0, nullptr, reinterpret_cast<void**>(&m_pPreviewData));
     }
 }
 
@@ -557,7 +571,7 @@ void RenderingSystem::Initialize()
     }
 
     m_particles = std::make_unique<ParticleSystem>(m_framework, &m_pipeline);
-    UINT particles = 10000;
+    UINT particles = 1;
     m_particles->Initialize(particles, particles);
 
     m_particles->EnableDepthCollisions
@@ -600,6 +614,8 @@ void RenderingSystem::Render()
     ThrowIfFailed(cmd->Reset(alloc, nullptr));
     m_framework->BeginFrame();
 
+    m_backBufferState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -637,8 +653,18 @@ void RenderingSystem::Render()
 
     m_gbuffer->TransitionToReadable(cmd);
 
-    DeferredPass();
-    PostProcessPass();
+    if (m_previewGBuffer)
+    {
+        PreviewGBufferPass();
+    }
+    else
+    {
+        DeferredPass();
+        PostProcessPass();
+    }
+
+    //DeferredPass();
+    //PostProcessPass();
 
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -739,6 +765,8 @@ void RenderingSystem::UpdateUI()
         ImGui::SliderFloat("Posterize Levels", &posterizeLevels, 2.0f, 32.0f);
         ImGui::Checkbox("Saturation", &m_enableSaturation);
         ImGui::SliderFloat("Saturation Value", &saturation, 0.0f, 2.5f);
+
+        ImGui::Checkbox("Preview GBuffer", &m_previewGBuffer);
 
         ImGui::End();
     }
@@ -1357,7 +1385,8 @@ void RenderingSystem::ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_
 {
     auto bbRtv = m_framework->GetCurrentRTVHandle();
     cmd->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
-    const float clear[4] = { 0,0,0,1 };
+
+    const float clear[4] = { 0, 0, 0, 1 };
     cmd->ClearRenderTargetView(bbRtv, clear, 0, nullptr);
     m_framework->SetViewportAndScissors();
 
@@ -1366,4 +1395,69 @@ void RenderingSystem::ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_
     cmd->SetGraphicsRootConstantBufferView(1, m_postBuffer->GetGPUVirtualAddress());
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
+}
+
+void RenderingSystem::PreviewGBufferPass()
+{
+    auto bbRtv = m_framework->GetCurrentRTVHandle();
+    const float clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    cmd->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+    cmd->ClearRenderTargetView(bbRtv, clear, 0, nullptr);
+
+    auto srvs = m_gbuffer->GetSRVs();
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetPreviewRS());
+    cmd->SetPipelineState(m_pipeline.GetPreviewPSO());
+    SetCommonHeaps();
+
+    const float width = m_framework->GetWidth();
+    const float height = m_framework->GetHeight();
+    const float cellW = width / 3.0f;
+    const float cellH = height / 2.0f;
+
+    struct GridItem 
+    { 
+        int mode; 
+        float x, y;
+    };
+
+    GridItem grid[] =
+    {
+        {0, 0.0f, 0.0f},  
+        {1, cellW, 0.0f},  
+        {2, cellW * 2.0f, 0.0f},
+        {3, 0.0f, cellH}, 
+        {4, cellW, cellH}, 
+        {5, cellW * 2.0f, cellH}
+    };
+
+    PreviewCB pcb{};
+    pcb.nearPlane = m_near;
+    pcb.farPlane = m_far;
+
+    int i = 0;
+    for (auto& item : grid)
+    {
+        pcb.mode = item.mode;
+
+        uint8_t* dst = m_pPreviewData + i * m_previewCBStride;
+        memcpy(dst, &pcb, sizeof(PreviewCB));
+
+        D3D12_VIEWPORT vp{ item.x, item.y, cellW, cellH, 0.0f, 1.0f };
+        D3D12_RECT sc{ (LONG)item.x, (LONG)item.y, (LONG)(item.x + cellW), (LONG)(item.y + cellH) };
+        cmd->RSSetViewports(1, &vp);
+        cmd->RSSetScissorRects(1, &sc);
+
+        cmd->OMSetRenderTargets(1, &bbRtv, FALSE, nullptr);
+
+        D3D12_GPU_VIRTUAL_ADDRESS gpuAddr = m_previewBuffer->GetGPUVirtualAddress() + static_cast<UINT64>(i) * m_previewCBStride;
+        cmd->SetGraphicsRootConstantBufferView(0, gpuAddr);
+
+        cmd->SetGraphicsRootDescriptorTable(1, srvs[0]);
+
+        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        cmd->DrawInstanced(3, 1, 0, 0);
+
+        ++i;
+    }
 }

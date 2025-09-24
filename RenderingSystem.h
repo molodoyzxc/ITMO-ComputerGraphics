@@ -142,6 +142,20 @@ private:
     XMFLOAT2 m_shadowMaskTiling{ 0.1f, 0.1f };
     float m_shadowMaskStrength = 0.0f;
 
+    bool m_previewGBuffer = false;
+    struct PreviewCB 
+    {
+        int mode;  // 0: Base Color, 1: Normal, 2: Depth, 3: Roughness, 4: Metallic, 5: AO
+        float nearPlane;
+        float farPlane;
+        float pad;    
+    };
+    ComPtr<ID3D12Resource> m_previewBuffer;
+    uint8_t * m_pPreviewData = nullptr;
+    UINT m_previewCBStride = 0;
+
+    D3D12_RESOURCE_STATES m_backBufferState = D3D12_RESOURCE_STATE_PRESENT;
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
@@ -184,4 +198,6 @@ private:
     void PostProcessPass();
     void ApplyPassToIntermediate(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv, ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv);
     void ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv);
+
+    void PreviewGBufferPass();
 };

@@ -70,6 +70,9 @@ void Pipeline::Init()
     Compile(L"PostEffects.hlsl", L"PS_Posterize", L"ps_6_0", psPosterize);
     Compile(L"PostEffects.hlsl", L"PS_Saturation", L"ps_6_0", psSaturation);
 
+    ComPtr<IDxcBlob> psPreview;
+    Compile(L"Shaders.hlsl", L"PS_PreviewGBuffer", L"ps_6_0", psPreview);
+
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -449,6 +452,64 @@ void Pipeline::Init()
         &skyDesc, IID_PPV_ARGS(&m_skyPSO)
     ));
 
+    srvRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
+
+    samplerRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
+
+    CD3DX12_ROOT_PARAMETER previewParams[2];
+    previewParams[0].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+    previewParams[1].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_PIXEL);
+
+    CD3DX12_STATIC_SAMPLER_DESC staticSampler(
+        0,
+        D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+        D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+        D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+        D3D12_TEXTURE_ADDRESS_MODE_CLAMP
+    );
+
+    CD3DX12_ROOT_SIGNATURE_DESC previewRootSigDesc;
+    previewRootSigDesc.Init(
+        _countof(previewParams),
+        previewParams,
+        1,
+        &staticSampler,
+        D3D12_ROOT_SIGNATURE_FLAG_NONE
+    );
+
+    ComPtr<ID3DBlob> serializedPreviewRS, errorBlobPreviewRS;
+    ThrowIfFailed(D3D12SerializeRootSignature(
+        &previewRootSigDesc,
+        D3D_ROOT_SIGNATURE_VERSION_1,
+        &serializedPreviewRS,
+        &errorBlobPreviewRS
+    ));
+    if (errorBlobPreviewRS)
+    {
+        OutputDebugStringA((char*)errorBlobPreviewRS->GetBufferPointer());
+        throw std::runtime_error("Failed to serialize preview root signature");
+    }
+    ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(
+        0,
+        serializedPreviewRS->GetBufferPointer(),
+        serializedPreviewRS->GetBufferSize(),
+        IID_PPV_ARGS(&m_previewRootSig)
+    ));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC previewDesc = {};
+    previewDesc.InputLayout = { nullptr, 0 };
+    previewDesc.pRootSignature = m_previewRootSig.Get();
+    previewDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+    previewDesc.PS = { psPreview->GetBufferPointer(), psPreview->GetBufferSize() };
+    previewDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    previewDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    previewDesc.DepthStencilState.DepthEnable = FALSE;
+    previewDesc.SampleMask = UINT_MAX;
+    previewDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    previewDesc.NumRenderTargets = 1;
+    previewDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    previewDesc.SampleDesc.Count = 1;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&previewDesc, IID_PPV_ARGS(&m_previewPSO)));
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)

@@ -530,3 +530,57 @@ float4 PS_Skybox(VSQOut IN) : SV_TARGET
 
     return float4(sky, 1.0);
 }
+
+
+cbuffer PreviewCB : register(b0)
+{
+    int PreviewMode;
+    float PreviewNear;
+    float PreviewFar;
+    float PreviewPad;
+};
+
+
+float4 PS_PreviewGBuffer(VSQOut IN) : SV_TARGET
+{
+    float2 uv = IN.uv;
+
+    float4 albedo = gAlbedoTex.Sample(samLinear, uv);
+
+    float4 normal = gNormalTex.Sample(samLinear, uv);
+
+    float4 params = gParamTex.Sample(samLinear, uv);
+
+    float depth = gDepthTex.Sample(samLinear, uv).r;
+
+    float3 color = 0.0.xxx;
+
+    if (PreviewMode == 0)
+    { 
+        color = albedo.rgb;
+    }
+    else if (PreviewMode == 1)
+    {
+        color = normal.xyz;
+    }
+    else if (PreviewMode == 2)
+    { 
+        float linearDepth = PreviewNear * PreviewFar / (PreviewFar + depth * (PreviewNear - PreviewFar));
+        float normDepth = saturate(linearDepth / PreviewFar); 
+        color = normDepth.xxx;
+    }
+    else if (PreviewMode == 3)
+    {
+        color = params.rrr;
+    }
+    else if (PreviewMode == 4)
+    { 
+        color = params.ggg;
+    }
+    else if (PreviewMode == 5)
+    { 
+        color = params.bbb;
+    }
+   
+    return float4(color, 1.0);
+}
