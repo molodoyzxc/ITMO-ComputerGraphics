@@ -15,6 +15,7 @@
 #include <array>
 #include "ParticleSystem.h"
 #include "Octree.h"
+#include "Terrain.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -85,7 +86,7 @@ private:
     float m_currentFPS = 0.0f;
     float dt;
 
-    XMFLOAT3 direction = {50.0f, -50.0f, 0.0f};
+    XMFLOAT3 direction = {1.0f, -50.0f, 0.0f};
     static constexpr UINT CSM_CASCADES = 4;
     XMFLOAT4X4 m_lightViewProjCSM[CSM_CASCADES];
     float m_cascadeSplits[CSM_CASCADES];
@@ -140,7 +141,7 @@ private:
     UINT m_shadowMaskSrvIndex = UINT(-1);
     CD3DX12_GPU_DESCRIPTOR_HANDLE m_shadowMaskSRV{};
     XMFLOAT2 m_shadowMaskTiling{ 0.1f, 0.1f };
-    float m_shadowMaskStrength = 0.0f;
+    float m_shadowMaskStrength = 1.0f;
 
     bool m_previewGBuffer = false;
     struct PreviewCB 
@@ -155,6 +156,24 @@ private:
     UINT m_previewCBStride = 0;
 
     D3D12_RESOURCE_STATES m_backBufferState = D3D12_RESOURCE_STATE_PRESENT;
+
+    std::unique_ptr<Terrain> m_terrain;
+    UINT m_heightmapSrvIndex = UINT(-1);
+    float m_terrainWorldSize = 2048.0f;
+    float m_terrainHeight = 800.0f;
+    int m_terrainMaxDepth = 4;
+    /*
+    4^0 = 1
+    4^1 = 4
+    4^2 = 16
+    4^3 = 64
+    4^4 = 256
+    4^5 = 1024
+    4^6 = 4096
+    */
+    float m_terrainSkirt = 1.0f;
+    float m_screenTau = 1.0f;
+    float offsetX = 0, offsetZ = 0;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -200,4 +219,6 @@ private:
     void ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv);
 
     void PreviewGBufferPass();
+
+    void TerrainPass();
 };

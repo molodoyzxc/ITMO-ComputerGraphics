@@ -243,7 +243,7 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
     cmd->CopyBufferRegion(m_readbackCount.Get(), 0, srcCnt, 0, 4);
     TransitIfNeeded(cmd, srcCnt, stateCntSrc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
-    cmd->Close();
+    ThrowIfFailed(cmd->Close());
     {
         ID3D12CommandList* lists[] = { cmd };
         m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists);
@@ -259,8 +259,7 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
 
     auto* alloc = m_framework->GetCommandAllocator();
     ThrowIfFailed(alloc->Reset());
-    ThrowIfFailed(m_framework->GetCommandList()->Reset(alloc, nullptr));
-    cmd = m_framework->GetCommandList();
+    ThrowIfFailed(cmd->Reset(alloc, nullptr));
 
     {
         SceneCB scb = m_sceneCBHost;
@@ -278,13 +277,9 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
 
     UpdateCB cb{};
     cb.dt = dt;
-    cb.accel[0] = 0.0f;
-    cb.accel[1] = -10.0f;
-    cb.accel[2] = 0.0f;
+    cb.accel[0] = 0.0f; cb.accel[1] = -10.0f; cb.accel[2] = 0.0f;
     cb.spawnCount = 0;
-    cb.emitterPos[0] = 0.0f;
-    cb.emitterPos[1] = 0.0f;
-    cb.emitterPos[2] = 0.0f;
+    cb.emitterPos[0] = 0.0f; cb.emitterPos[1] = 0.0f; cb.emitterPos[2] = 0.0f;
     cb.initialSpeed = 1.0f;
     cb.aliveCount = m_aliveCount;
     memcpy(m_updatePtr, &cb, sizeof(cb));
@@ -316,6 +311,7 @@ void ParticleSystem::Simulate(ID3D12GraphicsCommandList* cmd, float dt)
 
     m_usingAasRead = !m_usingAasRead;
 }
+
 
 void ParticleSystem::DrawGBuffer(ID3D12GraphicsCommandList* cmd)
 {

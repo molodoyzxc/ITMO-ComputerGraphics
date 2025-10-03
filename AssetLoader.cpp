@@ -499,7 +499,7 @@ std::vector<SceneObject> AssetLoader::LoadSceneObjects(const std::string& objPat
             const bool hasMetalMap = !m.metallic_texname.empty();
             const bool hasRoughMap = !m.roughness_texname.empty();
 
-            const bool hasAnyPBR = hasMetalMap || hasRoughMap || (m.metallic > 0.0f) || (m.roughness >= 0.0f);
+            const bool hasAnyPBR = hasMetalMap || hasRoughMap || (m.metallic > 0.0f) || (m.roughness > 0.0f);
 
             if (!hasAnyPBR)
             {

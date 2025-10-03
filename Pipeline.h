@@ -43,6 +43,7 @@ public:
     ID3D12PipelineState* GetSaturationPSO() const { return m_saturationPSO.Get(); }
     ID3D12RootSignature* GetPreviewRS() const { return m_previewRootSig.Get(); }
     ID3D12PipelineState* GetPreviewPSO() const { return m_previewPSO.Get(); }
+    ID3D12PipelineState* GetTerrainGBufferPSO() const { return m_terrainGBufferPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -76,6 +77,7 @@ private:
     ComPtr<ID3D12PipelineState> m_saturationPSO;
     ComPtr<ID3D12RootSignature> m_previewRootSig;
     ComPtr<ID3D12PipelineState> m_previewPSO;
+    ComPtr<ID3D12PipelineState> m_terrainGBufferPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

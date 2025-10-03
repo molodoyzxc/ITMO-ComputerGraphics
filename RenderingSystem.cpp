@@ -424,6 +424,52 @@ void RenderingSystem::Initialize()
         ResourceUploadBatch ub(device);
         ub.Begin();
 
+        //m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Terrain\\Mount\\Erosion2_Out.png");
+        m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Wall\\random_bricks_thick_disp_8k.png");
+        //m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Terrain\\height3.png");
+
+        //UINT terrainDiffuse = loader.LoadTexture(device, ub, m_framework, L"Assets\\Terrain\\Mount\\WaterColor_Out.png");
+        UINT terrainDiffuse = loader.LoadTexture(device, ub, m_framework, L"Assets\\Wall\\random_bricks_thick_diff_8k.png");
+        UINT terrainNormal = loader.LoadTexture(device, ub, m_framework, L"Assets\\Terrain\\Hill\\Normals_Out.png");
+
+        auto fut = ub.End(m_framework->GetCommandQueue());
+        fut.wait();
+
+        auto* alloc2 = m_framework->GetCommandAllocator();
+        ThrowIfFailed(alloc2->Reset());
+        ThrowIfFailed(cmd->Reset(alloc2, nullptr));
+
+        m_terrain = std::make_unique<Terrain>(m_framework, &m_pipeline);
+        m_terrain->SetRootAndPSO(m_pipeline.GetRootSignature(), m_pipeline.GetTerrainGBufferPSO());
+
+        m_terrain->Initialize
+        (
+            m_heightmapSrvIndex,
+            m_terrainWorldSize,
+            m_terrainMaxDepth,
+            m_terrainHeight,
+            m_terrainSkirt,
+            m_terrainWorldSize
+        );
+
+        m_terrain->SetDiffuseTexture(terrainDiffuse);
+        //m_terrain->SetNormalMap(terrainNormal, true);
+
+        offsetX = -(m_terrainWorldSize / 2);
+        offsetZ = -(m_terrainWorldSize / 2);
+
+        ThrowIfFailed(cmd->Close());
+        ID3D12CommandList* lists2[] = { cmd };
+        m_framework->GetCommandQueue()->ExecuteCommandLists(1, lists2);
+        m_framework->WaitForGpu();
+    }
+
+    {
+        using DirectX::ResourceUploadBatch;
+        auto* device = m_framework->GetDevice();
+        ResourceUploadBatch ub(device);
+        ub.Begin();
+
         m_ibl.irradianceSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomDiffuseHDR.dds");
         m_ibl.prefilteredSrv = loader.LoadDDSTextureCube(device, ub, m_framework, L"Assets\\IBL\\out\\RoomEnvHDR.dds");
         m_ibl.brdfSrv = loader.LoadTexture(device, ub, m_framework, L"Assets\\IBL\\out\\RoomBrdf.dds");
@@ -600,8 +646,6 @@ void RenderingSystem::Update(float)
     if (m_input->IsKeyDown(Keys::I)) lights[0].position.z += 2.0f;
     if (m_input->IsKeyDown(Keys::K)) lights[0].position.z -= 2.0f;
 
-    //m_objects[2].rotation.x += 0.01f;
-
     CountFPS();
     KeyboardControl();
 }
@@ -642,10 +686,10 @@ void RenderingSystem::Render()
 
     GeometryPass();
 
+    TerrainPass();
+
     m_gbuffer->TransitionToReadable(cmd);
     m_particles->Simulate(cmd, dt);
-
-    cmd = m_framework->GetCommandList();
 
     m_gbuffer->Bind(cmd);
     m_framework->SetViewportAndScissors();
@@ -662,9 +706,6 @@ void RenderingSystem::Render()
         DeferredPass();
         PostProcessPass();
     }
-
-    //DeferredPass();
-    //PostProcessPass();
 
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -767,6 +808,23 @@ void RenderingSystem::UpdateUI()
         ImGui::SliderFloat("Saturation Value", &saturation, 0.0f, 2.5f);
 
         ImGui::Checkbox("Preview GBuffer", &m_previewGBuffer);
+
+        ImGui::End();
+    }
+
+    {
+        ImGui::Begin("Terrain");
+
+        ImGui::Text("Tiles %d", m_terrain->GetDrawTileCount());
+
+        ImGui::SliderFloat("LOD screen tau", &m_screenTau, 0.0f, 1.0f);
+        ImGui::SliderFloat("Height", &m_terrainHeight, 500.0f, 1500.0f);
+        ImGui::SliderFloat("World size", &m_terrainWorldSize, 128.0f, 4096.0f);
+        ImGui::SliderFloat("Offset X", &offsetX, -200.0f, 200.0f);
+        ImGui::SliderFloat("Offset Z", &offsetZ, -200.0f, 200.0f);
+
+        m_terrain->SetWorldParams({ offsetX, offsetZ }, m_terrainWorldSize);
+        m_terrain->SetHeightScale(m_terrainHeight);
 
         ImGui::End();
     }
@@ -1433,7 +1491,7 @@ void RenderingSystem::PreviewGBufferPass()
 
     PreviewCB pcb{};
     pcb.nearPlane = m_near;
-    pcb.farPlane = m_far;
+    pcb.farPlane = 100.0f;
 
     int i = 0;
     for (auto& item : grid)
@@ -1460,4 +1518,31 @@ void RenderingSystem::PreviewGBufferPass()
 
         ++i;
     }
+}
+
+void RenderingSystem::TerrainPass()
+{
+    XMFLOAT4 planes[6];
+    ExtractFrustumPlanes(planes, viewProj);
+
+    XMFLOAT4X4 vp;
+    XMStoreFloat4x4(&vp, viewProj);
+
+    const float pxThreshold = 1024.0f;
+    const float width = static_cast<float>(m_framework->GetWidth());
+    const float screenTauNDC = (pxThreshold / width) * 2.0f;
+    //m_terrain->Collect(cameraPos, planes, vp, screenTauNDC);
+    
+    m_terrain->Collect(cameraPos, planes, vp, m_screenTau);
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
+    SetCommonHeaps();
+
+    auto srvStart = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+    cmd->SetGraphicsRootDescriptorTable(3, srvStart);
+
+    auto sampStart = m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart();
+    cmd->SetGraphicsRootDescriptorTable(4, sampStart);
+
+    m_terrain->DrawGBuffer(cmd);
 }

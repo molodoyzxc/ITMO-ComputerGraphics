@@ -73,6 +73,10 @@ void Pipeline::Init()
     ComPtr<IDxcBlob> psPreview;
     Compile(L"Shaders.hlsl", L"PS_PreviewGBuffer", L"ps_6_0", psPreview);
 
+    ComPtr<IDxcBlob> vsTerrain, psTerrain;
+    Compile(L"Terrain.hlsl", L"VS_TerrainGBuffer", L"vs_6_0", vsTerrain);
+    Compile(L"Terrain.hlsl", L"PS_TerrainGBuffer", L"ps_6_0", psTerrain);
+
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -510,6 +514,15 @@ void Pipeline::Init()
     previewDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     previewDesc.SampleDesc.Count = 1;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&previewDesc, IID_PPV_ARGS(&m_previewPSO)));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC terrainDesc = geoDesc;
+    terrainDesc.VS = { vsTerrain->GetBufferPointer(), vsTerrain->GetBufferSize() };
+    terrainDesc.PS = { psTerrain->GetBufferPointer(), psTerrain->GetBufferSize() };
+    terrainDesc.RasterizerState.FrontCounterClockwise = TRUE;
+    //terrainDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &terrainDesc, IID_PPV_ARGS(&m_terrainGBufferPSO)
+    ));
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)
