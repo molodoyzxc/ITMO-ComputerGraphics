@@ -171,9 +171,39 @@ private:
     4^5 = 1024
     4^6 = 4096
     */
-    float m_terrainSkirt = 1.0f;
+    float m_terrainSkirt = 10.0f;
     float m_screenTau = 1.0f;
     float offsetX = 0, offsetZ = 0;
+        
+    struct TerrainBrush
+    {
+        bool  enabled = true;
+        bool  invert = false;     
+        float radiusWorld = 20.0f;
+        float strength = 0.15f;   
+        float hardness = 0.5f;    
+        bool  painting = false;
+    } m_brush;
+
+    ComPtr<ID3D12Resource> m_heightDeltaTex;
+    UINT m_heightDeltaSrvIndex = 0;
+    int m_heightDeltaW = 1024;
+    int m_heightDeltaH = 1024;
+    std::vector<float> m_heightDeltaCPU;
+    std::vector<ComPtr<ID3D12Resource>> m_transientUploads;
+
+    ComPtr<ID3D12Resource> m_uvRT;             
+    D3D12_CPU_DESCRIPTOR_HANDLE m_uvRTV{};          
+    UINT m_uvRTVIndex = UINT_MAX;
+    ComPtr<ID3D12PipelineState> m_terrainUV_PSO;
+    ComPtr<ID3D12RootSignature> m_sharedRS;     
+    ComPtr<ID3D12Resource> m_uvReadback;
+    UINT64 m_uvReadbackPitch = 0;
+
+    ComPtr<ID3D12Resource> m_depthStaging;
+    UINT64 m_depthRowPitch = 0;          
+    UINT m_depthWidth = 0;               
+    UINT m_depthHeight = 0;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -221,4 +251,12 @@ private:
     void PreviewGBufferPass();
 
     void TerrainPass();
+
+    void InitHeightDeltaTexture();
+    void UpdateTerrainBrush(ID3D12GraphicsCommandList* cmd, float dt);
+    bool ScreenToWorldRay(float mx, float my, XMVECTOR& ro, XMVECTOR& rd);
+    bool RayPlaneY0(const XMVECTOR& ro, const XMVECTOR& rd, XMFLOAT3& hit);
+    bool WorldToTerrainUV(const XMFLOAT3& hit, XMFLOAT2& uv);
+    void ApplyBrushAtUV(const XMFLOAT2& uv, float dt, ID3D12GraphicsCommandList* cmd);
+    void UploadRegionToGPU(int x0, int y0, int w, int h, ID3D12GraphicsCommandList* cmd);
 };

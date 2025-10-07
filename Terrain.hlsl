@@ -11,23 +11,25 @@ cbuffer MaterialCB : register(b4)
     uint diffuseIdx;
     uint normalIdx;
     uint dispIdx;
-
+    
     uint roughIdx;
     uint metalIdx;
     uint aoIdx;
+    uint heightDeltaIdx;
+    
     uint hasDiffuseMap;
-
+    uint hasRoughMap;
+    uint hasMetalMap;
+    uint hasAOMap;
+    
     float4 baseColor;
-
+    
     float roughnessValue;
     float metallicValue;
     float aoValue;
-    uint hasRoughMap;
-
-    uint hasMetalMap;
-    uint hasAOMap;
     float _padM;
 };
+
 
 static const uint MAX_SRV = 100;
 Texture2D<float4> gTextures[MAX_SRV] : register(t0);
@@ -61,7 +63,9 @@ struct GBufferOut
 
 float SampleHeight(float2 uv)
 {
-    return gTextures[dispIdx].SampleLevel(samLinear, uv, 0).r;
+    float hBase = gTextures[dispIdx].SampleLevel(samLinear, uv, 0).r;
+    float hDelta = gTextures[heightDeltaIdx].SampleLevel(samLinear, uv, 0).r;
+    return hBase + hDelta;
 }
 
 VSOut VS_TerrainGBuffer(VSIn IN)
@@ -72,7 +76,7 @@ VSOut VS_TerrainGBuffer(VSIn IN)
     
     float h = SampleHeight(uvGlobal) * baseColor.a;
 
-    float3 local = float3(IN.pos.x, h, IN.pos.z);
+    float3 local = float3(IN.pos.x, IN.pos.y + h, IN.pos.z);
     float4 wp = mul(float4(local, 1), World);
     
     OUT.worldPos = wp;

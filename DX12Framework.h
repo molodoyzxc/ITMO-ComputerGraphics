@@ -56,6 +56,7 @@ public:
     UINT GetWhiteTextureSrvIndex() const { return m_whiteSrvIndex; }
     UINT GetFrameCount() { return FrameCount; }
     UINT& GetBackBufferIndex() { return m_backBufferIndex; }
+    HWND GetHwnd() { return m_hwnd; }
 
 
 private:
@@ -70,7 +71,7 @@ private:
     float m_width;
     float m_height;
 
-    static const UINT   FrameCount = 2;
+    static const UINT FrameCount = 2;
     UINT m_nextSrvDescriptor = 0;
     ComPtr<IDXGISwapChain3> m_swapChain;
     ComPtr<ID3D12Device> m_device;

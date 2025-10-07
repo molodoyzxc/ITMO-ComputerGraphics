@@ -418,18 +418,31 @@ void RenderingSystem::Initialize()
     LoadErrorTextures();
     LoadTextures();
 
+    auto depthDesc = m_gbuffer->GetDepthResource()->GetDesc();
+    m_depthWidth = static_cast<UINT>(depthDesc.Width);
+    m_depthHeight = depthDesc.Height;
+
+    D3D12_RESOURCE_DESC stagingDesc = CD3DX12_RESOURCE_DESC::Buffer(m_depthWidth * m_depthHeight * sizeof(float));
+    auto* device = m_framework->GetDevice();
+    CD3DX12_HEAP_PROPERTIES properties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_READBACK);
+    ThrowIfFailed(device->CreateCommittedResource(
+        &properties,
+        D3D12_HEAP_FLAG_NONE,
+        &stagingDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&m_depthStaging)));
+
     {
         using DirectX::ResourceUploadBatch;
         auto* device = m_framework->GetDevice();
         ResourceUploadBatch ub(device);
         ub.Begin();
 
-        //m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Terrain\\Mount\\Erosion2_Out.png");
-        m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Wall\\random_bricks_thick_disp_8k.png");
+        m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Terrain\\Mount\\Erosion2_Out.png");
         //m_heightmapSrvIndex = loader.LoadTexture(m_framework->GetDevice(), ub, m_framework, L"Assets\\Terrain\\height3.png");
 
-        //UINT terrainDiffuse = loader.LoadTexture(device, ub, m_framework, L"Assets\\Terrain\\Mount\\WaterColor_Out.png");
-        UINT terrainDiffuse = loader.LoadTexture(device, ub, m_framework, L"Assets\\Wall\\random_bricks_thick_diff_8k.png");
+        UINT terrainDiffuse = loader.LoadTexture(device, ub, m_framework, L"Assets\\Terrain\\Mount\\WaterColor_Out.png");
         UINT terrainNormal = loader.LoadTexture(device, ub, m_framework, L"Assets\\Terrain\\Hill\\Normals_Out.png");
 
         auto fut = ub.End(m_framework->GetCommandQueue());
@@ -449,11 +462,14 @@ void RenderingSystem::Initialize()
             m_terrainMaxDepth,
             m_terrainHeight,
             m_terrainSkirt,
-            m_terrainWorldSize
+            256
         );
 
         m_terrain->SetDiffuseTexture(terrainDiffuse);
         //m_terrain->SetNormalMap(terrainNormal, true);
+
+        InitHeightDeltaTexture();
+        m_terrain->SetHeightDeltaTexture(m_heightDeltaSrvIndex);
 
         offsetX = -(m_terrainWorldSize / 2);
         offsetZ = -(m_terrainWorldSize / 2);
@@ -686,7 +702,28 @@ void RenderingSystem::Render()
 
     GeometryPass();
 
+    UpdateTerrainBrush(cmd, dt);
+
     TerrainPass();
+
+    {
+        D3D12_RESOURCE_DESC depthDesc = m_gbuffer->GetDepthResource()->GetDesc();
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+        UINT numRows;
+        UINT64 rowSize;
+        m_framework->GetDevice()->GetCopyableFootprints(&depthDesc, 0, 1, 0, &footprint, &numRows, &rowSize, nullptr);
+        m_depthRowPitch = rowSize;
+
+        auto toCopySrc = CD3DX12_RESOURCE_BARRIER::Transition(m_gbuffer->GetDepthResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->ResourceBarrier(1, &toCopySrc);
+
+        CD3DX12_TEXTURE_COPY_LOCATION src(m_gbuffer->GetDepthResource(), 0);
+        CD3DX12_TEXTURE_COPY_LOCATION dst(m_depthStaging.Get(), footprint);
+        cmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+        auto toDepthWrite = CD3DX12_RESOURCE_BARRIER::Transition(m_gbuffer->GetDepthResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        cmd->ResourceBarrier(1, &toDepthWrite);
+    }
 
     m_gbuffer->TransitionToReadable(cmd);
     m_particles->Simulate(cmd, dt);
@@ -711,6 +748,8 @@ void RenderingSystem::Render()
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     m_framework->EndFrame();
+
+    m_transientUploads.clear();
 }
 
 void RenderingSystem::UpdateUI()
@@ -825,6 +864,17 @@ void RenderingSystem::UpdateUI()
 
         m_terrain->SetWorldParams({ offsetX, offsetZ }, m_terrainWorldSize);
         m_terrain->SetHeightScale(m_terrainHeight);
+
+        ImGui::End();
+    }
+
+    {
+        ImGui::Begin("Brush");
+
+        ImGui::Checkbox("Enable brush", &m_brush.enabled);
+        ImGui::SliderFloat("Radius", &m_brush.radiusWorld, 1.0f, 200.0f);
+        ImGui::SliderFloat("Strength", &m_brush.strength, 0.01f, 1.0f);
+        ImGui::SliderFloat("Hardness", &m_brush.hardness, 0.0f, 1.0f);
 
         ImGui::End();
     }
@@ -1545,4 +1595,248 @@ void RenderingSystem::TerrainPass()
     cmd->SetGraphicsRootDescriptorTable(4, sampStart);
 
     m_terrain->DrawGBuffer(cmd);
+}
+
+void RenderingSystem::InitHeightDeltaTexture()
+{
+    auto* device = m_framework->GetDevice();
+    auto* queue = m_framework->GetCommandQueue();
+
+    m_heightDeltaCPU.assign(m_heightDeltaW * m_heightDeltaH, 0.0f);
+
+    CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+    CD3DX12_RESOURCE_DESC texDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+        DXGI_FORMAT_R32_FLOAT,
+        (UINT)m_heightDeltaW, (UINT)m_heightDeltaH,
+        1, 1, 1, 0);
+    ThrowIfFailed(device->CreateCommittedResource(
+        &heapDefault, D3D12_HEAP_FLAG_NONE, &texDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+        IID_PPV_ARGS(&m_heightDeltaTex)));
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT rows = 0; UINT64 rowSize = 0, total = 0;
+    device->GetCopyableFootprints(&texDesc, 0, 1, 0, &fp, &rows, &rowSize, &total);
+
+    ComPtr<ID3D12Resource> uploadBuffer;
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+    CD3DX12_RESOURCE_DESC   bufDesc = CD3DX12_RESOURCE_DESC::Buffer(total);
+    ThrowIfFailed(device->CreateCommittedResource(
+        &heapUpload, D3D12_HEAP_FLAG_NONE, &bufDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+        IID_PPV_ARGS(&uploadBuffer)));
+
+    void* p = nullptr;
+    ThrowIfFailed(uploadBuffer->Map(0, nullptr, &p));
+    for (UINT y = 0; y < rows; ++y)
+        memset((uint8_t*)p + fp.Offset + y * fp.Footprint.RowPitch, 0, (size_t)rowSize);
+    uploadBuffer->Unmap(0, nullptr);
+
+    ComPtr<ID3D12CommandAllocator> tempAlloc;
+    ThrowIfFailed(device->CreateCommandAllocator(
+        D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&tempAlloc)));
+
+    ComPtr<ID3D12GraphicsCommandList> tempCmd;
+    ThrowIfFailed(device->CreateCommandList(
+        0, D3D12_COMMAND_LIST_TYPE_DIRECT, tempAlloc.Get(), nullptr,
+        IID_PPV_ARGS(&tempCmd)));
+
+    CD3DX12_TEXTURE_COPY_LOCATION dst(m_heightDeltaTex.Get(), 0);
+    CD3DX12_TEXTURE_COPY_LOCATION src(uploadBuffer.Get(), fp);
+    tempCmd->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+
+    auto toSRV = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_heightDeltaTex.Get(),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    tempCmd->ResourceBarrier(1, &toSRV);
+
+    ThrowIfFailed(tempCmd->Close());
+    ID3D12CommandList* lists[] = { tempCmd.Get() };
+    queue->ExecuteCommandLists(1, lists);
+    m_framework->WaitForGpu();
+
+    m_heightDeltaSrvIndex = m_framework->AllocateSrvDescriptor();
+    auto cpu = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+        m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart(),
+        m_heightDeltaSrvIndex, m_framework->GetSrvDescriptorSize());
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+    sd.Format = DXGI_FORMAT_R32_FLOAT;
+    sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    sd.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(m_heightDeltaTex.Get(), &sd, cpu);
+}
+
+bool RenderingSystem::ScreenToWorldRay(float mx, float my, XMVECTOR& ro, XMVECTOR& rd)
+{
+    float w = (float)m_framework->GetWidth();
+    float h = (float)m_framework->GetHeight();
+    float x = 2.f * mx / w - 1.f;
+    float y = 1.f - 2.f * my / h;
+    XMMATRIX invVP = XMMatrixInverse(nullptr, viewProj);
+
+    XMVECTOR pN = XMVectorSet(x, y, 0.f, 1.f);
+    XMVECTOR pF = XMVectorSet(x, y, 1.f, 1.f);
+    pN = XMVector4Transform(pN, invVP);
+    pF = XMVector4Transform(pF, invVP);
+    pN = XMVectorScale(pN, 1.f / XMVectorGetW(pN));
+    pF = XMVectorScale(pF, 1.f / XMVectorGetW(pF));
+
+    ro = pN;
+    rd = XMVector3Normalize(pF - pN);
+    return true;
+}
+
+bool RenderingSystem::RayPlaneY0(const XMVECTOR& ro, const XMVECTOR& rd, XMFLOAT3& hit)
+{
+    float dy = XMVectorGetY(rd);
+    if (fabsf(dy) < 1e-6f) return false;
+    float t = -XMVectorGetY(ro) / dy;
+    if (t <= 0.f) return false;
+    XMVECTOR p = ro + t * rd;
+    XMStoreFloat3(&hit, p);
+    return true;
+}
+
+bool RenderingSystem::WorldToTerrainUV(const XMFLOAT3& P, XMFLOAT2& uv)
+{
+    float u = (P.x - offsetX) / m_terrainWorldSize;
+    float v = (P.z - offsetZ) / m_terrainWorldSize;
+    if (u < 0.f || u > 1.f || v < 0.f || v > 1.f) return false;
+    uv = { u, v };
+    return true;
+}
+
+void RenderingSystem::UpdateTerrainBrush(ID3D12GraphicsCommandList* cmd, float dt)
+{
+
+    if (!m_brush.enabled) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) return;
+
+    m_brush.painting = io.MouseDown[0];
+
+    if (!m_brush.painting) return;
+
+    m_brush.invert = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
+    POINT mouse;
+    GetCursorPos(&mouse);
+    ScreenToClient(m_framework->GetHwnd(), &mouse);
+    int mx = std::clamp(static_cast<int>(mouse.x), 0, static_cast<int>(m_depthWidth) - 1);
+    int my = std::clamp(static_cast<int>(mouse.y), 0, static_cast<int>(m_depthHeight) - 1);
+
+    void* mappedData = nullptr;
+    m_depthStaging->Map(0, nullptr, &mappedData);
+    float* depthData = static_cast<float*>(mappedData);
+    UINT colPitch = static_cast<UINT>(m_depthRowPitch / sizeof(float));
+    float depth = depthData[my * colPitch + mx];
+    m_depthStaging->Unmap(0, nullptr);
+
+    if (depth >= 1.0f || depth <= 0.0f) return;
+
+    float ndcX = (2.0f * mx / m_depthWidth) - 1.0f;
+    float ndcY = 1.0f - (2.0f * my / m_depthHeight);
+    XMFLOAT4 clipPos(ndcX, ndcY, depth, 1.0f);
+
+    XMMATRIX invViewProj = XMMatrixInverse(nullptr, viewProj); 
+    XMVECTOR worldVec = XMVector4Transform(XMLoadFloat4(&clipPos), invViewProj);
+    worldVec = XMVectorScale(worldVec, 1.0f / XMVectorGetW(worldVec));
+    XMFLOAT3 worldHit;
+    XMStoreFloat3(&worldHit, worldVec);
+
+    XMFLOAT2 uv;
+    if (!WorldToTerrainUV(worldHit, uv)) return;
+
+    ApplyBrushAtUV(uv, dt, cmd);
+}
+
+void RenderingSystem::ApplyBrushAtUV(const XMFLOAT2& uv, float dt, ID3D12GraphicsCommandList* cmd)
+{
+    const float sign = m_brush.invert ? -1.f : 1.f;
+
+    float rUV = m_brush.radiusWorld / m_terrainWorldSize;
+    int   rPx = (int)ceilf(rUV * m_heightDeltaW);
+
+    int cx = (int)floorf(uv.x * m_heightDeltaW);
+    int cy = (int)floorf(uv.y * m_heightDeltaH);
+    int x0 = max(0, cx - rPx), x1 = min(m_heightDeltaW - 1, cx + rPx);
+    int y0 = max(0, cy - rPx), y1 = min(m_heightDeltaH - 1, cy + rPx);
+
+    if (x0 > x1 || y0 > y1) return;
+
+    float expH = 1.0f + m_brush.hardness * 8.0f;
+    float k = sign * m_brush.strength * dt;
+
+    for (int y = y0; y <= y1; ++y)
+    {
+        for (int x = x0; x <= x1; ++x)
+        {
+            float dx = (x + 0.5f - cx), dy = (y + 0.5f - cy);
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d > rPx) continue;
+
+            float t = 1.0f - (d / (float)rPx);
+            float w = powf(max(0.0f, t), expH);
+
+            float& cell = m_heightDeltaCPU[y * m_heightDeltaW + x];
+            cell = std::clamp(cell + k * w, -1.0f, 1.0f);
+        }
+    }
+
+    UploadRegionToGPU(x0, y0, x1 - x0 + 1, y1 - y0 + 1, cmd);
+}
+
+void RenderingSystem::UploadRegionToGPU(int x0, int y0, int w, int h, ID3D12GraphicsCommandList* cmd)
+{
+    if (w <= 0 || h <= 0) return;
+
+    auto* device = m_framework->GetDevice();
+
+    CD3DX12_RESOURCE_DESC regionTexDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32_FLOAT, (UINT)w, (UINT)h, 1, 1);
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT rows = 0; UINT64 rowSize = 0, total = 0;
+    device->GetCopyableFootprints(&regionTexDesc, 0, 1, 0, &fp, &rows, &rowSize, &total);
+
+    ComPtr<ID3D12Resource> uploadBuffer;
+    CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+    CD3DX12_RESOURCE_DESC   bufDesc = CD3DX12_RESOURCE_DESC::Buffer(total);
+
+    ThrowIfFailed(device->CreateCommittedResource(
+        &heapUpload, D3D12_HEAP_FLAG_NONE, &bufDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuffer)));
+
+    m_transientUploads.push_back(uploadBuffer);
+
+    void* p = nullptr; ThrowIfFailed(uploadBuffer->Map(0, nullptr, &p));
+    uint8_t* dstBase = (uint8_t*)p + fp.Offset;
+
+    for (UINT row = 0; row < rows; ++row)
+    {
+        const float* src = &m_heightDeltaCPU[(y0 + (int)row) * m_heightDeltaW + x0];
+        memcpy(dstBase + row * fp.Footprint.RowPitch, src, (size_t)rowSize);
+    }
+    uploadBuffer->Unmap(0, nullptr);
+
+    CD3DX12_RESOURCE_BARRIER toCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_heightDeltaTex.Get(),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_COPY_DEST);
+    cmd->ResourceBarrier(1, &toCopy);
+
+    CD3DX12_TEXTURE_COPY_LOCATION dst(m_heightDeltaTex.Get(), 0); 
+    CD3DX12_TEXTURE_COPY_LOCATION src(uploadBuffer.Get(), fp);    
+
+    D3D12_BOX srcBox{ 0u, 0u, 0u, (UINT)w, (UINT)h, 1u };
+    cmd->CopyTextureRegion(&dst, (UINT)x0, (UINT)y0, 0, &src, &srcBox);
+
+    CD3DX12_RESOURCE_BARRIER toSRV = CD3DX12_RESOURCE_BARRIER::Transition(
+        m_heightDeltaTex.Get(),
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &toSRV);
 }

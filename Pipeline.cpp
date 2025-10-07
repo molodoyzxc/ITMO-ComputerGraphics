@@ -519,6 +519,7 @@ void Pipeline::Init()
     terrainDesc.VS = { vsTerrain->GetBufferPointer(), vsTerrain->GetBufferSize() };
     terrainDesc.PS = { psTerrain->GetBufferPointer(), psTerrain->GetBufferSize() };
     terrainDesc.RasterizerState.FrontCounterClockwise = TRUE;
+    terrainDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     //terrainDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &terrainDesc, IID_PPV_ARGS(&m_terrainGBufferPSO)

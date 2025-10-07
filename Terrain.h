@@ -36,15 +36,14 @@ public:
 
     void Collect(const XMFLOAT3& cam, const XMFLOAT4 planes[6], const XMFLOAT4X4& viewProj, float screenTau);
 
-    struct MaterialCBCPU 
+    struct MaterialCBCPU
     {
         float useNormalMap = 0;
-        UINT  diffuseIdx = 0, normalIdx = 0, dispIdx = 0;
-        UINT  roughIdx = 0, metalIdx = 0, aoIdx = 0, hasDiffuseMap = 0;
+        UINT diffuseIdx = 0, normalIdx = 0, dispIdx = 0;
+        UINT roughIdx = 0, metalIdx = 0, aoIdx = 0, heightDeltaIdx = 0;
+        UINT hasDiffuseMap = 0, hasRoughMap = 0, hasMetalMap = 0, hasAOMap = 0;
         XMFLOAT4 baseColor{ 1,1,1, 1.0f };
-        float roughnessValue = 1.0f, metallicValue = 0.0f, aoValue = 1.0f;
-        UINT  hasRoughMap = 0, hasMetalMap = 0, hasAOMap = 0;
-        float _pad = 0;
+        float   roughnessValue = 1.0f, metallicValue = 0.0f, aoValue = 1.0f, _pad = 0.0f;
     } material{};
 
     void CreateCB();
@@ -78,6 +77,12 @@ public:
     void DisableNormalMap() 
     {
         material.useNormalMap = 0.0f;
+        memcpy(m_matPtr, &material, sizeof(material));
+    }
+
+    void SetHeightDeltaTexture(UINT srvIndex)
+    {
+        material.heightDeltaIdx = srvIndex;
         memcpy(m_matPtr, &material, sizeof(material));
     }
 
