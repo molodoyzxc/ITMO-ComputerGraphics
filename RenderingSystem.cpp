@@ -40,26 +40,27 @@ struct TessCB {
 
 struct MaterialCB
 {
-    float useNormalMap;
-    UINT diffuseIdx;
-    UINT normalIdx;
-    UINT dispIdx;
+    float      useNormalMap;
+    UINT       diffuseIdx;
+    UINT       normalIdx;
+    UINT       dispIdx;
 
-    UINT roughIdx;
-    UINT metalIdx;
-    UINT aoIdx;
-    UINT hasDiffuseMap;
+    UINT       roughIdx;
+    UINT       metalIdx;
+    UINT       aoIdx;
+    UINT       hasDiffuseMap;
 
-    XMFLOAT4 baseColor;
+    XMFLOAT4   baseColor;
 
-    float roughnessValue;
-    float metallicValue;
-    float aoValue;
-    UINT hasRoughMap;
+    UINT       useRoughMap;
+    UINT       useMetalMap;
+    UINT       useAOMap;
+    UINT       hasRoughMap;
 
-    UINT hasMetalMap;
-    UINT hasAOMap;
-    float _padM;
+    UINT       hasMetalMap;
+    UINT       hasAOMap;
+    UINT       _padM0;
+    UINT       _padM1;
 };
 
 struct PostCB
@@ -92,6 +93,52 @@ struct ErrorTextures {
     UINT ambientOcclusion{};
     UINT diffuse{};
 } errorTextures;
+
+struct TAACB
+{
+    XMFLOAT2 jitterCur;
+    XMFLOAT2 jitterPrev;
+    float  alpha;
+    float _pad0;
+    XMFLOAT2 invResolution;
+    float  clampK;
+    float reactiveK;
+
+    XMFLOAT4X4 CurrViewProjInv;
+    XMFLOAT4X4 PrevViewProj;
+
+    float zDiffNdc;
+    float uvGuard;
+    float _padA;
+    float _padB;
+};
+
+struct VelCBData
+{
+    XMFLOAT2 invRes;
+    XMFLOAT2 jitterCur;
+    XMFLOAT2 jitterPrev;
+    XMFLOAT4X4 CurrInv;
+    XMFLOAT4X4 PrevVP;
+    float uvGuard;
+    float zDiffNdc;
+    float pad0, pad1;
+};
+
+static float Halton(uint32_t index, uint32_t base)
+{
+    float f = 1.0f;
+    float result = 0.0f;
+
+    while (index > 0) 
+    { 
+        f /= base;
+        result += f * (index % base);
+        index /= base; 
+    }
+
+    return result;
+}
 
 RenderingSystem::RenderingSystem(DX12Framework* framework, InputDevice* input)
     : m_framework(framework)
@@ -145,7 +192,7 @@ void RenderingSystem::SetObjects()
     (
         {
             //"Assets\\SponzaCrytek\\sponza.obj", 
-            "Assets\\TestPBR\\TestPBR.obj", 
+            //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
             //"Assets\\LOD\\bunnyLOD1.obj", 
@@ -153,11 +200,13 @@ void RenderingSystem::SetObjects()
             //"Assets\\LOD\\bunnyLOD3.obj", 
             //"Assets\\TestShadows\\wall.obj", 
             //"Assets\\TestShadows\\floor.obj", 
+            //"Assets\\Cube\\cube.obj", 
+            "Assets\\Camera\\vintage_video_camera_1k.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 1.1f;
+    m_objectScale = 1000.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) {
@@ -228,10 +277,12 @@ void RenderingSystem::LoadTextures()
     uploadBatch.Begin();
 
     //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
-    std::filesystem::path sceneFolder = L"Assets\\TestPBR";
+    //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
     //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
+    //std::filesystem::path sceneFolder = L"Assets\\Cube";
+    std::filesystem::path sceneFolder = L"Assets\\Camera";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -363,6 +414,16 @@ void RenderingSystem::CreateConstantBuffers()
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_previewBuffer)
         ));
         m_previewBuffer->Map(0, nullptr, reinterpret_cast<void**>(&m_pPreviewData));
+    }
+
+    {
+        const UINT totalSize = Align256(sizeof(TAACB));
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_taaCB)));
+        CD3DX12_RANGE rr(0, 0);
+        m_taaCB->Map(0, &rr, reinterpret_cast<void**>(&m_pTaaData));
     }
 }
 
@@ -517,18 +578,17 @@ void RenderingSystem::Initialize()
             &cv, IID_PPV_ARGS(&m_lightAccum)
         ));
 
-        auto* rtvHeap = m_framework->GetRtvHeap();
-        const auto rtvHeapDesc = rtvHeap->GetDesc();
-        const UINT rtvLastIndex = rtvHeapDesc.NumDescriptors - 1;
+        D3D12_DESCRIPTOR_HEAP_DESC dLA = {};
+        dLA.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        dLA.NumDescriptors = 1;
+        ThrowIfFailed(device->CreateDescriptorHeap(&dLA, IID_PPV_ARGS(&m_lightAccumRTVHeap)));
 
-        m_lightAccumRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
-            rtvHeap->GetCPUDescriptorHandleForHeapStart(),
-            rtvLastIndex, m_framework->GetRtvDescriptorSize());
+        m_lightAccumRTV = m_lightAccumRTVHeap->GetCPUDescriptorHandleForHeapStart();
 
-        D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
-        rtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-        rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-        m_framework->GetDevice()->CreateRenderTargetView(m_lightAccum.Get(), &rtvDesc, m_lightAccumRTV);
+        D3D12_RENDER_TARGET_VIEW_DESC rtvLA{};
+        rtvLA.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        rtvLA.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        device->CreateRenderTargetView(m_lightAccum.Get(), &rtvLA, m_lightAccumRTV);
 
         m_lightAccumSrvIndex = m_framework->AllocateSrvDescriptor();
         auto srvCPU = CD3DX12_CPU_DESCRIPTOR_HANDLE(
@@ -569,12 +629,14 @@ void RenderingSystem::Initialize()
 
         ThrowIfFailed(device->CreateCommittedResource(
             &heapDefault, D3D12_HEAP_FLAG_NONE, &ldrDesc,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &ldrClear,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, 
+            &ldrClear,
             IID_PPV_ARGS(&m_postA)));
 
         ThrowIfFailed(device->CreateCommittedResource(
             &heapDefault, D3D12_HEAP_FLAG_NONE, &ldrDesc,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &ldrClear,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            &ldrClear,
             IID_PPV_ARGS(&m_postB)));
 
         m_postARTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
@@ -584,14 +646,6 @@ void RenderingSystem::Initialize()
 
         device->CreateRenderTargetView(m_postA.Get(), nullptr, m_postARTV);
         device->CreateRenderTargetView(m_postB.Get(), nullptr, m_postBRTV);
-
-        m_lightAccumRTV = CD3DX12_CPU_DESCRIPTOR_HANDLE(
-            rtvHeap->GetCPUDescriptorHandleForHeapStart(), last, rtvInc);
-
-        D3D12_RENDER_TARGET_VIEW_DESC hdrRtvDesc{};
-        hdrRtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-        hdrRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-        device->CreateRenderTargetView(m_lightAccum.Get(), &hdrRtvDesc, m_lightAccumRTV);
 
         m_postASrvIndex = m_framework->AllocateSrvDescriptor();
         m_postBSrvIndex = m_framework->AllocateSrvDescriptor();
@@ -613,9 +667,156 @@ void RenderingSystem::Initialize()
 
         m_postASRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_postASrvIndex, srvInc);
         m_postBSRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_postBSrvIndex, srvInc);
+
+        m_postAState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        m_postBState = D3D12_RESOURCE_STATE_RENDER_TARGET;
     }
 
-    CreateConstantBuffers();
+    {
+        auto* device = m_framework->GetDevice();
+        const UINT w = (UINT)m_framework->GetWidth();
+        const UINT h = (UINT)m_framework->GetHeight();
+
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        CD3DX12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Tex2D(
+            DXGI_FORMAT_R16G16_FLOAT, w, h, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+
+        D3D12_CLEAR_VALUE cv{};
+        cv.Format = DXGI_FORMAT_R16G16_FLOAT;
+        cv.Color[0] = cv.Color[1] = cv.Color[2] = 0.0f; cv.Color[3] = 0.0f;
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            &cv,
+            IID_PPV_ARGS(&m_velocity)));
+
+        D3D12_DESCRIPTOR_HEAP_DESC dV = { D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0 };
+        ThrowIfFailed(device->CreateDescriptorHeap(&dV, IID_PPV_ARGS(&m_velocityRTVHeap)));
+
+        m_velocityRTV = m_velocityRTVHeap->GetCPUDescriptorHandleForHeapStart();
+
+        D3D12_RENDER_TARGET_VIEW_DESC rtvV{};
+        rtvV.Format = DXGI_FORMAT_R16G16_FLOAT;
+        rtvV.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        device->CreateRenderTargetView(m_velocity.Get(), &rtvV, m_velocityRTV);
+
+        m_velocitySrvIndex = m_framework->AllocateSrvDescriptor();
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+
+        auto srvCPU0 = m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart();
+        auto srvGPU0 = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+        UINT srvInc = m_framework->GetSrvDescriptorSize();
+        device->CreateShaderResourceView(m_velocity.Get(), &srvDesc,
+            CD3DX12_CPU_DESCRIPTOR_HANDLE(srvCPU0, m_velocitySrvIndex, srvInc));
+        m_velocitySRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_velocitySrvIndex, srvInc);
+
+        m_velocityState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    }
+
+    {
+        auto* device = m_framework->GetDevice();
+        auto* rtvHeap = m_framework->GetRtvHeap();
+        const UINT rtvInc = m_framework->GetRtvDescriptorSize();
+        const auto rtvHeapDesc = rtvHeap->GetDesc();
+        const UINT last = rtvHeapDesc.NumDescriptors - 1;
+
+        CD3DX12_HEAP_PROPERTIES heapDefault(D3D12_HEAP_TYPE_DEFAULT);
+        CD3DX12_RESOURCE_DESC ldrDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+            DXGI_FORMAT_R16G16B16A16_FLOAT,
+            (UINT)m_framework->GetWidth(),
+            (UINT)m_framework->GetHeight(),
+            1, 1, 1, 0,
+            D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+
+        D3D12_CLEAR_VALUE ldrClear{};
+        ldrClear.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        ldrClear.Color[0] = ldrClear.Color[1] = ldrClear.Color[2] = 0.0f; ldrClear.Color[3] = 1.0f;
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &ldrDesc,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &ldrClear, IID_PPV_ARGS(&m_historyA)));
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapDefault, D3D12_HEAP_FLAG_NONE, &ldrDesc,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, &ldrClear, IID_PPV_ARGS(&m_historyB)));
+        
+        m_historyA->SetName(L"TAA_HistoryA");
+        m_historyB->SetName(L"TAA_HistoryB");
+
+        m_historyAState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        m_historyBState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+        D3D12_DESCRIPTOR_HEAP_DESC dHA = { D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0 };
+        D3D12_DESCRIPTOR_HEAP_DESC dHB = dHA;
+
+        ThrowIfFailed(device->CreateDescriptorHeap(&dHA, IID_PPV_ARGS(&m_historyARTVHeap)));
+        ThrowIfFailed(device->CreateDescriptorHeap(&dHB, IID_PPV_ARGS(&m_historyBRTVHeap)));
+
+        m_historyARTV = m_historyARTVHeap->GetCPUDescriptorHandleForHeapStart();
+        m_historyBRTV = m_historyBRTVHeap->GetCPUDescriptorHandleForHeapStart();
+
+        device->CreateRenderTargetView(m_historyA.Get(), nullptr, m_historyARTV);
+        device->CreateRenderTargetView(m_historyB.Get(), nullptr, m_historyBRTV);
+
+        m_historyASrvIndex = m_framework->AllocateSrvDescriptor();
+        m_historyBSrvIndex = m_framework->AllocateSrvDescriptor();
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+
+        auto  srvCPU0 = m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart();
+        auto  srvGPU0 = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+        UINT  srvInc = m_framework->GetSrvDescriptorSize();
+
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHA(srvCPU0, m_historyASrvIndex, srvInc);
+        CD3DX12_CPU_DESCRIPTOR_HANDLE cpuHB(srvCPU0, m_historyBSrvIndex, srvInc);
+        device->CreateShaderResourceView(m_historyA.Get(), &srvDesc, cpuHA);
+        device->CreateShaderResourceView(m_historyB.Get(), &srvDesc, cpuHB);
+
+        m_historyASRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_historyASrvIndex, srvInc);
+        m_historyBSRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_historyBSrvIndex, srvInc);
+    }
+
+    {
+        const DXGI_FORMAT kDepthHistoryFormat = DXGI_FORMAT_R32_FLOAT;
+        CD3DX12_RESOURCE_DESC prevDepthDesc = CD3DX12_RESOURCE_DESC::Tex2D(
+            kDepthHistoryFormat, m_framework->GetWidth(), m_framework->GetHeight(), 1, 1, 1, 0, D3D12_RESOURCE_FLAG_NONE);
+
+        CD3DX12_HEAP_PROPERTIES heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapProperties, D3D12_HEAP_FLAG_NONE,
+            &prevDepthDesc, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, nullptr,
+            IID_PPV_ARGS(&m_prevDepth)));
+
+        m_prevDepthSrvIndex = m_framework->AllocateSrvDescriptor();
+        D3D12_SHADER_RESOURCE_VIEW_DESC zSrv{};
+        zSrv.Format = kDepthHistoryFormat;
+        zSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        zSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        zSrv.Texture2D.MipLevels = 1;
+        auto srvCPU0 = m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart();
+        auto srvGPU0 = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+        UINT srvInc = m_framework->GetSrvDescriptorSize();
+        device->CreateShaderResourceView(m_prevDepth.Get(), &zSrv,
+            CD3DX12_CPU_DESCRIPTOR_HANDLE(srvCPU0, m_prevDepthSrvIndex, srvInc));
+        m_prevDepthSRV = CD3DX12_GPU_DESCRIPTOR_HANDLE(srvGPU0, m_prevDepthSrvIndex, srvInc);
+    }
+
+    m_postA->SetName(L"PostA");
+    m_postB->SetName(L"PostB");
+    m_velocity->SetName(L"VelocityRT");
+    m_lightAccum->SetName(L"LightAccumHDR");
+
+    CreateConstantBuffers();    
 
     {
         auto* device = m_framework->GetDevice();
@@ -642,6 +843,12 @@ void RenderingSystem::Initialize()
         (UINT)m_framework->GetWidth(),
         (UINT)m_framework->GetHeight()
     );
+
+    {
+        m_prevViewProj = view * proj;
+        m_resetHistory = true;
+        m_taaFrameIndex = 0;
+    }
 }
 
 void RenderingSystem::Update(float)
@@ -704,7 +911,7 @@ void RenderingSystem::Render()
 
     UpdateTerrainBrush(cmd, dt);
 
-    TerrainPass();
+    //TerrainPass();
 
     {
         D3D12_RESOURCE_DESC depthDesc = m_gbuffer->GetDepthResource()->GetDesc();
@@ -747,7 +954,7 @@ void RenderingSystem::Render()
     ImGui::Render();
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmd);
 
-    m_framework->EndFrame();
+        m_framework->EndFrame();
 
     m_transientUploads.clear();
 }
@@ -790,12 +997,15 @@ void RenderingSystem::UpdateUI()
             ImGui::InputFloat("Scale", &m_objectScale, 5.0f);
             m_objects[objectIdx].scale = { m_objectScale, m_objectScale, m_objectScale };
 
-            ImGui::InputFloat("Pos x", &m_objects[objectIdx].position.x, 1.0f);
-            ImGui::InputFloat("Pos y", &m_objects[objectIdx].position.y, 1.0f);
-            ImGui::InputFloat("Pos z", &m_objects[objectIdx].position.z, 1.0f);
+            ImGui::SliderFloat("Pos x", &m_objects[objectIdx].position.x, -2.0f, 2.0f);
+            ImGui::SliderFloat("Pos y", &m_objects[objectIdx].position.y, -2.0f, 2.0f);
+            ImGui::SliderFloat("Pos z", &m_objects[objectIdx].position.z, -2.0f, 2.0f);
         }
 
-        ImGui::InputFloat("Use normal map (0/1)", &m_useNormalMap, 1.0f);
+        ImGui::InputFloat("Use normal map", &m_useNormalMap, 1.0f);
+        ImGui::Checkbox("Use Roughness Map", &m_useRoughMapUI);
+        ImGui::Checkbox("Use Metallic Map", &m_useMetalMapUI);
+        ImGui::Checkbox("Use AO Map", &m_useAOMapUI);
 
         ImGui::End();
     }
@@ -878,6 +1088,14 @@ void RenderingSystem::UpdateUI()
 
         ImGui::End();
     }
+
+    {
+        ImGui::Begin("TAA");
+
+        ImGui::Checkbox("TAA", &m_enableTAA);
+    
+        ImGui::End();
+    }
 }
 
 void RenderingSystem::BuildViewProj()
@@ -894,8 +1112,38 @@ void RenderingSystem::BuildViewProj()
 
     view = XMMatrixLookAtLH(eye, at, up);
 
-    const float aspect = static_cast<float>(m_framework->GetWidth()) / m_framework->GetHeight();
-    proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, m_near, m_far);
+    const float w = static_cast<float>(m_framework->GetWidth());
+    const float h = static_cast<float>(m_framework->GetHeight());
+    const float aspect = w / h;
+
+    XMMATRIX P = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, m_near, m_far);
+
+    if (m_enableTAA)
+    {
+        m_taaJitterPixPrev = m_taaJitterPix;
+        m_taaJitterClipPrev = m_taaJitterClip;
+
+        const uint32_t idx = (m_taaFrameIndex & 1023u) + 1u;
+        const float jxPix = Halton(idx, 2) - 0.5f;
+        const float jyPix = Halton(idx, 3) - 0.5f;
+        m_taaJitterPix = { jxPix, jyPix };
+
+        const float sx = (2.0f * jxPix) / w;
+        const float sy = -(2.0f * jyPix) / h;
+        m_taaJitterClip = { sx, sy };
+
+        XMFLOAT4X4 Pf; XMStoreFloat4x4(&Pf, P);
+        Pf._31 += sx;
+        Pf._32 += sy;
+        P = XMLoadFloat4x4(&Pf);
+    }
+    else
+    {
+        m_taaJitterPix = m_taaJitterPixPrev = { 0,0 };
+        m_taaJitterClip = m_taaJitterClipPrev = { 0,0 };
+    }
+
+    proj = P;
     viewProj = view * proj;
 }
 
@@ -953,14 +1201,13 @@ void RenderingSystem::UpdatePerObjectCBs()
         mcb.aoIdx = obj->texIdx[5];
 
         mcb.hasDiffuseMap = obj->material.diffuseTexPath.empty() ? 0u : 1u;
-
         mcb.hasRoughMap = obj->material.roughnessTexPath.empty() ? 0u : 1u;
         mcb.hasMetalMap = obj->material.metallicTexPath.empty() ? 0u : 1u;
         mcb.hasAOMap = obj->material.aoTexPath.empty() ? 0u : 1u;
 
-        mcb.roughnessValue = obj->material.roughness;
-        mcb.metallicValue = obj->material.metallic;
-        mcb.aoValue = obj->material.ao;
+        mcb.useRoughMap = m_useRoughMapUI ? 1u : 0u;
+        mcb.useMetalMap = m_useMetalMapUI ? 1u : 0u;
+        mcb.useAOMap = m_useAOMapUI ? 1u : 0u;
 
         mcb.baseColor = { obj->material.diffuse.x,
                           obj->material.diffuse.y,
@@ -1422,30 +1669,111 @@ void RenderingSystem::PostProcessPass()
     bool useA = true;
 
     auto takeDstRes = [&](bool a)->ID3D12Resource* { return a ? m_postA.Get() : m_postB.Get(); };
-    auto takeDstRTV = [&](bool a)->D3D12_CPU_DESCRIPTOR_HANDLE { return a ? m_postARTV : m_postBRTV;   };
+    auto takeDstRTV = [&](bool a)->D3D12_CPU_DESCRIPTOR_HANDLE { return a ? m_postARTV : m_postBRTV; };
 
     auto doInter = [&](ID3D12PipelineState* pso)
         {
-            auto* dstRes = takeDstRes(useA);
-            auto  dstRTV = takeDstRTV(useA);
+            ID3D12Resource* dstRes = takeDstRes(useA);
+            auto dstRTV = takeDstRTV(useA);
             D3D12_GPU_DESCRIPTOR_HANDLE outSrv{};
             ApplyPassToIntermediate(pso, cur, dstRes, dstRTV, outSrv);
             cur = outSrv;
             useA = !useA;
         };
 
-    std::vector<ID3D12PipelineState*> passes;
-    passes.push_back(m_enableTonemap ? m_pipeline.GetTonemapPSO()
+    doInter(m_enableTonemap ? m_pipeline.GetTonemapPSO()
         : m_pipeline.GetCopyHDRtoLDRPSO());
 
-    passes.push_back(m_enableGamma ? m_pipeline.GetGammaPSO()
-        : m_pipeline.GetCopyLDRPSO());
+    {
+        TransitionResource(cmd, m_velocity.Get(), m_velocityState, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+        const float clearV[4] = { 0,0,0,0 };
+        cmd->OMSetRenderTargets(1, &m_velocityRTV, FALSE, nullptr);
+        cmd->ClearRenderTargetView(m_velocityRTV, clearV, 0, nullptr);
+        m_framework->SetViewportAndScissors();
+
+        cmd->SetGraphicsRootSignature(m_pipeline.GetPostRS());
+        SetCommonHeaps();
+
+        const auto& gbufSrvs = m_gbuffer->GetSRVs();
+        D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv = gbufSrvs[3];
+        cmd->SetGraphicsRootDescriptorTable(0, currDepthSrv);
+
+        VelCBData vcb{};
+        vcb.invRes = { 1.0f / m_framework->GetWidth(), 1.0f / m_framework->GetHeight() };
+        vcb.jitterCur = m_taaJitterPix;
+        vcb.jitterPrev = m_taaJitterPixPrev;
+        XMStoreFloat4x4(&vcb.CurrInv, XMMatrixInverse(nullptr, viewProj));
+        XMStoreFloat4x4(&vcb.PrevVP, m_prevViewProj);
+        vcb.uvGuard = 2.0f;
+        vcb.zDiffNdc = 0.004f;
+
+        ComPtr<ID3D12Resource> velCB;
+        {
+            CD3DX12_HEAP_PROPERTIES heapUpload(D3D12_HEAP_TYPE_UPLOAD);
+            auto desc = CD3DX12_RESOURCE_DESC::Buffer(Align256(sizeof(VelCBData)));
+            ThrowIfFailed(m_framework->GetDevice()->CreateCommittedResource(
+                &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&velCB)));
+            uint8_t* p = nullptr;
+            velCB->Map(0, nullptr, reinterpret_cast<void**>(&p));
+            memcpy(p, &vcb, sizeof(vcb));
+            velCB->Unmap(0, nullptr);
+            m_transientUploads.push_back(velCB);
+        }
+        cmd->SetGraphicsRootConstantBufferView(1, velCB->GetGPUVirtualAddress());
+
+        cmd->SetPipelineState(m_pipeline.GetVelocityPSO());
+        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        cmd->DrawInstanced(3, 1, 0, 0);
+
+        TransitionResource(cmd, m_velocity.Get(), m_velocityState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    }
+
+    if (m_enableTAA)
+    {
+        const bool writeToHistA = ((m_taaFrameIndex & 1u) == 0u);
+        ID3D12Resource* dstRes = writeToHistA ? m_historyA.Get() : m_historyB.Get();
+        D3D12_CPU_DESCRIPTOR_HANDLE dstRTV = writeToHistA ? m_historyARTV : m_historyBRTV;
+
+        D3D12_GPU_DESCRIPTOR_HANDLE histSrv = writeToHistA ? m_historyBSRV : m_historyASRV;
+        if (m_taaFrameIndex == 0 || m_resetHistory) histSrv = cur;
+
+        UpdateTAACB();
+
+        const auto& gbufSrvs = m_gbuffer->GetSRVs();
+        D3D12_GPU_DESCRIPTOR_HANDLE prevDepthSrv = m_prevDepthSRV;
+        D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv = gbufSrvs[3];
+        D3D12_GPU_DESCRIPTOR_HANDLE velocitySrv = m_velocitySRV;
+
+        D3D12_GPU_DESCRIPTOR_HANDLE taaOut{};
+        ApplyTAAToIntermediate(cur, histSrv, prevDepthSrv, currDepthSrv, velocitySrv, dstRes, dstRTV, taaOut);
+        cur = taaOut;
+
+        m_prevViewProj = viewProj;
+
+        CopyDepthToPrev();
+
+        ++m_taaFrameIndex;
+    }
+    else
+    {
+        m_prevViewProj = viewProj;
+        CopyDepthToPrev();
+    }
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetPostRS());
+    SetCommonHeaps();
+    UpdatePostCB();
+
+    std::vector<ID3D12PipelineState*> passes;
+    passes.push_back(m_pipeline.GetGammaPSO());
 
     if (m_enableInvert) passes.push_back(m_pipeline.GetInvertPSO());
     if (m_enableGrayscale) passes.push_back(m_pipeline.GetGrayscalePSO());
     if (m_enablePixelate) passes.push_back(m_pipeline.GetPixelatePSO());
     if (m_enablePosterize) passes.push_back(m_pipeline.GetPosterizePSO());
-    if (m_enableSaturation) passes.push_back(m_pipeline.GetSaturationPSO());
+    if (m_enableSaturation)passes.push_back(m_pipeline.GetSaturationPSO());
 
     passes.push_back(m_enableVignette ? m_pipeline.GetVignettePSO()
         : m_pipeline.GetCopyLDRPSO());
@@ -1458,11 +1786,17 @@ void RenderingSystem::PostProcessPass()
     }
 }
 
-void RenderingSystem::ApplyPassToIntermediate( ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv, ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
+void RenderingSystem::ApplyPassToIntermediate(
+    ID3D12PipelineState* pso,
+    D3D12_GPU_DESCRIPTOR_HANDLE inSrv,
+    ID3D12Resource* dst,
+    D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
+    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
 {
-    auto toRT = CD3DX12_RESOURCE_BARRIER::Transition(
-        dst, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    cmd->ResourceBarrier(1, &toRT);
+    D3D12_RESOURCE_STATES* pState =
+        (dst == m_postA.Get()) ? &m_postAState : &m_postBState;
+
+    TransitionResource(cmd, dst, *pState, D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     cmd->OMSetRenderTargets(1, &dstRtv, FALSE, nullptr);
     const float clear[4] = { 0,0,0,1 };
@@ -1475,18 +1809,9 @@ void RenderingSystem::ApplyPassToIntermediate( ID3D12PipelineState* pso, D3D12_G
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->DrawInstanced(3, 1, 0, 0);
 
-    auto toSRV = CD3DX12_RESOURCE_BARRIER::Transition(
-        dst, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    cmd->ResourceBarrier(1, &toSRV);
+    TransitionResource(cmd, dst, *pState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-    if (dst == m_postA.Get()) 
-    { 
-        outSrv = m_postASRV;
-    }
-    else
-    { 
-        outSrv = m_postBSRV;
-    }
+    outSrv = (dst == m_postA.Get()) ? m_postASRV : m_postBSRV;
 }
 
 void RenderingSystem::ApplyPassToBackbuffer(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv)
@@ -1839,4 +2164,142 @@ void RenderingSystem::UploadRegionToGPU(int x0, int y0, int w, int h, ID3D12Grap
         D3D12_RESOURCE_STATE_COPY_DEST,
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     cmd->ResourceBarrier(1, &toSRV);
+}
+
+void RenderingSystem::ApplyTAAToIntermediate(
+    D3D12_GPU_DESCRIPTOR_HANDLE currSrv,
+    D3D12_GPU_DESCRIPTOR_HANDLE historySrv,
+    D3D12_GPU_DESCRIPTOR_HANDLE prevDepthSrv,
+    D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv,
+    D3D12_GPU_DESCRIPTOR_HANDLE velocitySrv,
+    ID3D12Resource* dst,
+    D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
+    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
+{
+    D3D12_RESOURCE_STATES* pState =
+        (dst == m_historyA.Get()) ? &m_historyAState : &m_historyBState;
+
+    TransitionResource(cmd, dst, *pState, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    cmd->OMSetRenderTargets(1, &dstRtv, FALSE, nullptr);
+    const float clearC[4] = { 0,0,0,0 };
+    cmd->ClearRenderTargetView(dstRtv, clearC, 0, nullptr);
+    m_framework->SetViewportAndScissors();
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetTAARS());
+    SetCommonHeaps();
+
+    cmd->SetGraphicsRootDescriptorTable(0, currSrv);
+    cmd->SetGraphicsRootDescriptorTable(1, historySrv);
+    cmd->SetGraphicsRootDescriptorTable(2, prevDepthSrv);
+    cmd->SetGraphicsRootDescriptorTable(3, currDepthSrv);
+    cmd->SetGraphicsRootDescriptorTable(4, velocitySrv);
+    cmd->SetGraphicsRootConstantBufferView(5, m_taaCB->GetGPUVirtualAddress());
+
+    cmd->SetPipelineState(m_pipeline.GetTAAPSO());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
+
+    TransitionResource(cmd, dst, *pState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    outSrv = (dst == m_historyA.Get()) ? m_historyASRV : m_historyBSRV;
+}   
+
+void RenderingSystem::DoTAAPass(
+    D3D12_GPU_DESCRIPTOR_HANDLE currLDR,
+    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv,
+    bool writeToHistoryA)
+{
+    ID3D12Resource* dst = writeToHistoryA ? m_historyA.Get() : m_historyB.Get();
+    auto dstRTV = writeToHistoryA ? m_historyARTV : m_historyBRTV;
+    auto histSrv = writeToHistoryA ? m_historyBSRV : m_historyASRV;
+
+    if (m_taaFrameIndex == 0)
+        histSrv = currLDR;
+
+    UpdateTAACB();
+
+    D3D12_GPU_DESCRIPTOR_HANDLE prevDepth = m_prevDepthSRV;
+    D3D12_GPU_DESCRIPTOR_HANDLE currDepth = m_gbuffer->GetSRVs()[3];
+    D3D12_GPU_DESCRIPTOR_HANDLE velSrv = m_velocitySRV;
+
+    D3D12_GPU_DESCRIPTOR_HANDLE taaOut{};
+    ApplyTAAToIntermediate(currLDR, histSrv, prevDepth, currDepth, velSrv, dst, dstRTV, taaOut);
+    outSrv = taaOut;
+
+    m_prevViewProj = viewProj;
+    m_taaFrameIndex++;
+}
+
+void RenderingSystem::UpdateTAACB()
+{
+    TAACB cb{};
+
+    cb.jitterCur = m_taaJitterPix;
+    cb.jitterPrev = m_taaJitterPixPrev;
+
+    cb.alpha = std::clamp(m_taaAlpha, 0.0f, 1.0f);
+    cb.invResolution = { 1.0f / m_framework->GetWidth(), 1.0f / m_framework->GetHeight() };
+    cb.clampK = 0.01f;
+    cb.reactiveK = 0.28f;
+
+    XMStoreFloat4x4(&cb.CurrViewProjInv, XMMatrixInverse(nullptr, viewProj));
+    XMStoreFloat4x4(&cb.PrevViewProj, m_prevViewProj);
+
+    cb.zDiffNdc = 0.0045f;
+    cb.uvGuard = 2.0f;
+
+    if (m_resetHistory)
+    {
+        cb.alpha = 1.0f;
+        m_resetHistory = false;
+    }
+
+    memcpy(m_pTaaData, &cb, sizeof(cb));
+}
+
+void RenderingSystem::CopyDepthToPrev()
+{
+    ID3D12Resource* src = m_gbuffer->GetDepthResource();
+    ID3D12Resource* dst = m_prevDepth.Get();
+
+    {
+        auto srcToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+            src,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            D3D12_RESOURCE_STATE_COPY_SOURCE
+        );
+        auto dstToCopy = CD3DX12_RESOURCE_BARRIER::Transition(
+            dst,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_COPY_DEST
+        );
+        cmd->ResourceBarrier(1, &srcToCopy);
+        cmd->ResourceBarrier(1, &dstToCopy);
+    }
+
+    cmd->CopyResource(dst, src);
+
+    {
+        auto srcBack = CD3DX12_RESOURCE_BARRIER::Transition(
+            src,
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+            D3D12_RESOURCE_STATE_GENERIC_READ
+        );
+        auto dstBack = CD3DX12_RESOURCE_BARRIER::Transition(
+            dst,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+        );
+        cmd->ResourceBarrier(1, &srcBack);
+        cmd->ResourceBarrier(1, &dstBack);
+    }
+}
+
+void RenderingSystem::TransitionResource(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res, D3D12_RESOURCE_STATES& current, D3D12_RESOURCE_STATES target)
+{
+    if (current == target) return;
+    auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(res, current, target);
+    cmd->ResourceBarrier(1, &barrier);
+    current = target;
 }

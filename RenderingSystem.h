@@ -65,7 +65,7 @@ private:
 
     float m_yaw = 0.f;
     float m_pitch = 0.f;    
-    XMFLOAT3 cameraPos{ 0.0f, 0.0f, -1.0f };
+    XMFLOAT3 cameraPos{ -200.0f, 200.0f, 200.0f };
     float m_near = 0.1f;
     float m_far = 5000.0f;
 
@@ -81,6 +81,9 @@ private:
     XMFLOAT3 m_objectRotationDeg{ 0,0,0 };
     int objectIdx = 0;
     float m_useNormalMap = 0.0f;
+    bool m_useRoughMapUI = true;
+    bool m_useMetalMapUI = true;
+    bool m_useAOMapUI = true;
     float m_fakeCameraZ = 0.0f;
 
     float m_currentFPS = 0.0f;
@@ -115,6 +118,10 @@ private:
     UINT m_postASrvIndex = 0;
     UINT m_postBSrvIndex = 0;
 
+    ComPtr<ID3D12DescriptorHeap> m_lightAccumRTVHeap;
+    ComPtr<ID3D12DescriptorHeap> m_velocityRTVHeap;
+    ComPtr<ID3D12DescriptorHeap> m_historyARTVHeap, m_historyBRTVHeap;
+
     bool m_enableTonemap = true;
     bool m_enableGamma = true;
     bool m_enableVignette = true;
@@ -141,7 +148,7 @@ private:
     UINT m_shadowMaskSrvIndex = UINT(-1);
     CD3DX12_GPU_DESCRIPTOR_HANDLE m_shadowMaskSRV{};
     XMFLOAT2 m_shadowMaskTiling{ 0.1f, 0.1f };
-    float m_shadowMaskStrength = 1.0f;
+    float m_shadowMaskStrength = 0.0f;
 
     bool m_previewGBuffer = false;
     struct PreviewCB 
@@ -205,6 +212,43 @@ private:
     UINT m_depthWidth = 0;               
     UINT m_depthHeight = 0;
 
+    bool m_enableTAA = true;
+    UINT m_taaFrameIndex = 0;
+    XMFLOAT2 m_taaJitterPix{ 0,0 };
+    XMFLOAT2 m_taaJitterPixPrev{ 0,0 };
+    XMFLOAT2 m_taaJitterClip{ 0,0 };
+    XMFLOAT2 m_taaJitterClipPrev{ 0,0 };
+    float m_taaAlpha = 0.1f;
+    bool m_resetHistory = true;
+
+    ComPtr<ID3D12Resource> m_historyA;
+    ComPtr<ID3D12Resource> m_historyB;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_historyARTV{};
+    D3D12_CPU_DESCRIPTOR_HANDLE m_historyBRTV{};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_historyASRV{};
+    D3D12_GPU_DESCRIPTOR_HANDLE m_historyBSRV{};
+    UINT m_historyASrvIndex = 0;
+    UINT m_historyBSrvIndex = 0;
+
+    ComPtr<ID3D12Resource> m_taaCB;
+    uint8_t* m_pTaaData = nullptr;
+
+    ComPtr<ID3D12Resource> m_prevDepth;
+    UINT m_prevDepthSrvIndex = 0;
+    D3D12_GPU_DESCRIPTOR_HANDLE m_prevDepthSRV{};
+    XMMATRIX m_prevViewProj;
+
+    ComPtr<ID3D12Resource> m_velocity;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_velocityRTV;
+    D3D12_GPU_DESCRIPTOR_HANDLE m_velocitySRV;
+    UINT m_velocitySrvIndex;
+
+    D3D12_RESOURCE_STATES m_historyAState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    D3D12_RESOURCE_STATES m_historyBState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    D3D12_RESOURCE_STATES m_velocityState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    D3D12_RESOURCE_STATES m_postAState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    D3D12_RESOURCE_STATES m_postBState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
@@ -259,4 +303,22 @@ private:
     bool WorldToTerrainUV(const XMFLOAT3& hit, XMFLOAT2& uv);
     void ApplyBrushAtUV(const XMFLOAT2& uv, float dt, ID3D12GraphicsCommandList* cmd);
     void UploadRegionToGPU(int x0, int y0, int w, int h, ID3D12GraphicsCommandList* cmd);
+
+
+    void ApplyTAAToIntermediate(
+        D3D12_GPU_DESCRIPTOR_HANDLE currSrv,
+        D3D12_GPU_DESCRIPTOR_HANDLE historySrv,
+        D3D12_GPU_DESCRIPTOR_HANDLE prevDepthSrv,
+        D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv,
+        D3D12_GPU_DESCRIPTOR_HANDLE velocitySrv,
+        ID3D12Resource* dst,
+        D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
+        D3D12_GPU_DESCRIPTOR_HANDLE& outSrv);
+    void DoTAAPass(
+        D3D12_GPU_DESCRIPTOR_HANDLE currLDR,
+        D3D12_GPU_DESCRIPTOR_HANDLE& outSrv,
+        bool writeToHistoryA);
+    void UpdateTAACB();
+    void CopyDepthToPrev();
+    void TransitionResource(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res, D3D12_RESOURCE_STATES& current, D3D12_RESOURCE_STATES target);
 };

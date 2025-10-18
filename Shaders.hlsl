@@ -47,17 +47,19 @@ cbuffer MaterialCB : register(b4)
     uint aoIdx;
     uint hasDiffuseMap;
 
-    float4 baseColor; // Kd
+    float4 baseColor;
     
-    float roughnessValue;
-    float metallicValue;
-    float aoValue;
+    uint useRoughMap;
+    uint useMetalMap;
+    uint useAOMap;
     uint hasRoughMap;
 
     uint hasMetalMap;
     uint hasAOMap;
-    float _padM;
+    uint _padM0;
+    uint _padM1;
 };
+
 
 static const uint MAX_SRV = 100; // DX12Framework::srvDesc.NumDescriptors
 Texture2D<float4> gTextures[MAX_SRV] : register(t0);
@@ -242,9 +244,17 @@ GBufferOut PS_GBuffer(VSOutput IN)
     float3 worldN = lerp(N, mapped, useNormalMap);
     OUT.Normal = float4(worldN * 0.5 + 0.5, 0);
     
-    float rough = (hasRoughMap != 0) ? gTextures[roughIdx].Sample(samLinear, uv).r : roughnessValue;
-    float metal = (hasMetalMap != 0) ? gTextures[metalIdx].Sample(samLinear, uv).r : metallicValue;
-    float ao = (hasAOMap != 0) ? gTextures[aoIdx].Sample(samLinear, uv).r : aoValue;
+    const float ROUGH_DEFAULT = 1.0;
+    const float METAL_DEFAULT = 0.0;
+    const float AO_DEFAULT = 1.0;
+    
+    const bool useR = (useRoughMap != 0) && (hasRoughMap != 0);
+    const bool useM = (useMetalMap != 0) && (hasMetalMap != 0);
+    const bool useA = (useAOMap != 0) && (hasAOMap != 0);
+    
+    float rough = useR ? gTextures[roughIdx].Sample(samLinear, uv).r : ROUGH_DEFAULT;
+    float metal = useM ? gTextures[metalIdx].Sample(samLinear, uv).r : METAL_DEFAULT;
+    float ao = useA ? gTextures[aoIdx].Sample(samLinear, uv).r : AO_DEFAULT;
 
     OUT.Params = float4(saturate(rough), saturate(metal), saturate(ao), 0.0);
     return OUT;
@@ -451,8 +461,10 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
 
         float denom = max(4.0 * saturate(dot(N, V)) * NdotL, 1e-7);
         float3 spec = (D * G * F) / denom;
+        
+        float3 diff = (kD * baseColor / PI) * ao;
 
-        radiance = LightColor.rgb * (kD * baseColor / PI + spec) * NdotL * shadow;
+        radiance = LightColor.rgb * (diff + spec) * NdotL * shadow;
     }
     else if (LightType == 1)  // Point
     {
@@ -477,7 +489,9 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
             float denom = max(4.0 * saturate(dot(N, V)) * NdotL, 1e-7);
             float3 spec = (D * G * F) / denom;
 
-            radiance = LightColor.rgb * (kD * baseColor / PI + spec) * NdotL * att;
+            float3 diff = (kD * baseColor / PI) * ao;
+            
+            radiance = LightColor.rgb * (diff + spec) * NdotL * att;
         }
     }
     else if (LightType == 2)  // Spot
@@ -508,7 +522,9 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
             float denom = max(4.0 * saturate(dot(N, V)) * NdotL, 1e-7);
             float3 spec = (D * G * F) / denom;
 
-            radiance = LightColor.rgb * (kD * baseColor / PI + spec) * NdotL * distAtt * spotAtt;
+            float3 diff = (kD * baseColor / PI) * ao;
+            
+            radiance = LightColor.rgb * (diff + spec) * NdotL * distAtt * spotAtt;
         }
     }
 

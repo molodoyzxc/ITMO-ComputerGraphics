@@ -44,6 +44,9 @@ public:
     ID3D12RootSignature* GetPreviewRS() const { return m_previewRootSig.Get(); }
     ID3D12PipelineState* GetPreviewPSO() const { return m_previewPSO.Get(); }
     ID3D12PipelineState* GetTerrainGBufferPSO() const { return m_terrainGBufferPSO.Get(); }
+    ID3D12RootSignature* GetTAARS() const { return m_taaRootSig.Get(); }
+    ID3D12PipelineState* GetTAAPSO() const { return m_taaPSO.Get(); }
+    ID3D12PipelineState* GetVelocityPSO() const { return m_velocityPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -78,6 +81,9 @@ private:
     ComPtr<ID3D12RootSignature> m_previewRootSig;
     ComPtr<ID3D12PipelineState> m_previewPSO;
     ComPtr<ID3D12PipelineState> m_terrainGBufferPSO;
+    ComPtr<ID3D12RootSignature> m_taaRootSig;
+    ComPtr<ID3D12PipelineState> m_taaPSO;
+    ComPtr<ID3D12PipelineState> m_velocityPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };

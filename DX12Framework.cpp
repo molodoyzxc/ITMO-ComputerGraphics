@@ -382,9 +382,7 @@ void DX12Framework::EndFrame()
     ThrowIfFailed(m_commandList->Close());
     ID3D12CommandList* lists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
-
-    //ThrowIfFailed(m_swapChain->Present(0, 0)); //vsync off
-    ThrowIfFailed(m_swapChain->Present(1, 0)); //vsync on
+    ThrowIfFailed(m_swapChain->Present(1, 0));
     m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
 
     const UINT64 fenceToWaitFor = ++m_fenceValue;

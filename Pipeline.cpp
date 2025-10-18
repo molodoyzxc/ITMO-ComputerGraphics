@@ -77,6 +77,11 @@ void Pipeline::Init()
     Compile(L"Terrain.hlsl", L"VS_TerrainGBuffer", L"vs_6_0", vsTerrain);
     Compile(L"Terrain.hlsl", L"PS_TerrainGBuffer", L"ps_6_0", psTerrain);
 
+    ComPtr<IDxcBlob> psTAA;
+    Compile(L"TAA.hlsl", L"PS_TAA", L"ps_6_0", psTAA);
+    ComPtr<IDxcBlob> psVelocity;
+    Compile(L"Velocity.hlsl", L"PS_Velocity", L"ps_6_0", psVelocity);
+
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -141,6 +146,7 @@ void Pipeline::Init()
     opaqueDesc.NumRenderTargets = 1;
     opaqueDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     opaqueDesc.SampleDesc.Count = 1;
+    opaqueDesc.SampleDesc.Quality = 0;
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &opaqueDesc, IID_PPV_ARGS(&m_opaquePSO)
     ));
@@ -524,6 +530,94 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &terrainDesc, IID_PPV_ARGS(&m_terrainGBufferPSO)
     ));
+
+    CD3DX12_DESCRIPTOR_RANGE rangeCurr;
+    rangeCurr.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+    CD3DX12_DESCRIPTOR_RANGE rangeHist;
+    rangeHist.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);
+    CD3DX12_DESCRIPTOR_RANGE rangeZPrev;
+    rangeZPrev.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);
+    CD3DX12_DESCRIPTOR_RANGE rangeZCurr;
+    rangeZCurr.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);
+    CD3DX12_DESCRIPTOR_RANGE rangeVel;
+    rangeVel.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
+
+    CD3DX12_ROOT_PARAMETER taaParams[6];
+    taaParams[0].InitAsDescriptorTable(1, &rangeCurr, D3D12_SHADER_VISIBILITY_PIXEL);
+    taaParams[1].InitAsDescriptorTable(1, &rangeHist, D3D12_SHADER_VISIBILITY_PIXEL);
+    taaParams[2].InitAsDescriptorTable(1, &rangeZPrev, D3D12_SHADER_VISIBILITY_PIXEL);
+    taaParams[3].InitAsDescriptorTable(1, &rangeZCurr, D3D12_SHADER_VISIBILITY_PIXEL);
+    taaParams[4].InitAsDescriptorTable(1, &rangeVel, D3D12_SHADER_VISIBILITY_PIXEL);
+    taaParams[5].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+    D3D12_STATIC_SAMPLER_DESC taaStaticSam{};
+    taaStaticSam.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    taaStaticSam.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    taaStaticSam.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    taaStaticSam.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    taaStaticSam.MipLODBias = 0.0f;
+    taaStaticSam.MaxAnisotropy = 1;
+    taaStaticSam.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    taaStaticSam.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    taaStaticSam.MinLOD = 0.0f;
+    taaStaticSam.MaxLOD = D3D12_FLOAT32_MAX;
+    taaStaticSam.ShaderRegister = 0;
+    taaStaticSam.RegisterSpace = 0;
+    taaStaticSam.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    CD3DX12_ROOT_SIGNATURE_DESC taaRsDesc;
+    taaRsDesc.Init(
+        _countof(taaParams), taaParams,
+        1, &taaStaticSam,
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
+    );
+
+    Microsoft::WRL::ComPtr<ID3DBlob> taaSig, taaErr;
+    HRESULT hrRS = D3D12SerializeRootSignature(
+        &taaRsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &taaSig, &taaErr);
+
+    if (FAILED(hrRS)) {
+        if (taaErr) OutputDebugStringA((const char*)taaErr->GetBufferPointer());
+        throw std::runtime_error("Failed to serialize TAA root signature");
+    }
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(
+        0, taaSig->GetBufferPointer(), taaSig->GetBufferSize(),
+        IID_PPV_ARGS(&m_taaRootSig)));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC taaDesc = {};
+    taaDesc.InputLayout = { nullptr, 0 };
+    taaDesc.pRootSignature = m_taaRootSig.Get();
+    taaDesc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+    taaDesc.PS = { psTAA->GetBufferPointer(), psTAA->GetBufferSize() };
+    taaDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    taaDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    taaDesc.DepthStencilState.DepthEnable = FALSE;
+    taaDesc.SampleMask = UINT_MAX;
+    taaDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    taaDesc.NumRenderTargets = 1;
+    taaDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    taaDesc.SampleDesc.Count = 1;
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &taaDesc, IID_PPV_ARGS(&m_taaPSO)));
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC dVelocity = {};
+    dVelocity.InputLayout = { nullptr, 0 };
+    dVelocity.pRootSignature = m_postRootSig.Get();
+    dVelocity.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+    dVelocity.PS = { psVelocity->GetBufferPointer(), psVelocity->GetBufferSize() };
+    dVelocity.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    dVelocity.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    dVelocity.DepthStencilState.DepthEnable = FALSE;
+    dVelocity.SampleMask = UINT_MAX;
+    dVelocity.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    dVelocity.NumRenderTargets = 1;
+    dVelocity.RTVFormats[0] = DXGI_FORMAT_R16G16_FLOAT;
+    dVelocity.SampleDesc.Count = 1;
+
+    ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
+        &dVelocity, IID_PPV_ARGS(&m_velocityPSO)));
 }
 
 void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob)
