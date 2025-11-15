@@ -33,6 +33,8 @@ cbuffer LightingCB : register(b1)
 cbuffer AmbientCB : register(b2)
 {
     float4 AmbientColor;
+    float4 FogColorDensity;
+    float4 FogParams;
 };
 
 cbuffer MaterialCB : register(b4)
@@ -345,6 +347,36 @@ float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
     return F0 + (max(1.0.xxx - roughness, F0) - F0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
+float3 ApplyHeightFog(float3 color, float3 worldPos)
+{
+    float3 fogColor = FogColorDensity.rgb;
+    float density = FogColorDensity.a;
+    float heightFalloff = FogParams.x;
+    float baseHeight = FogParams.y;
+    float maxOpacity = FogParams.z;
+    float enabled = FogParams.w;
+    
+    if (enabled < 0.5 || density <= 0.0)
+        return color;
+
+    float3 toCamera = CameraPos.xyz - worldPos;
+    float dist = length(toCamera);
+    if (dist <= 0.0)
+        return color;
+    
+    float h = max(worldPos.y - baseHeight, 0.0);
+    float heightTerm = exp(-heightFalloff * h);
+    
+    float opticalDepth = density * heightTerm * dist;
+    
+    float transmittance = exp(-opticalDepth);
+
+    float fogAmount = 1.0 - transmittance;
+    fogAmount = saturate(fogAmount * maxOpacity);
+
+    return lerp(color, fogColor, fogAmount);
+}
+
 float4 PS_Ambient(VSQOut IN) : SV_TARGET
 {
     float2 uv = IN.uv;
@@ -386,6 +418,8 @@ float4 PS_Ambient(VSQOut IN) : SV_TARGET
     
     float3 color = (kD * diffuseIBL + specularIBL) * ao * AmbientColor.rgb;
 
+    color = ApplyHeightFog(color, worldPos);
+    
     return float4(color, 1.0);
 }
 
@@ -527,8 +561,10 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
             radiance = LightColor.rgb * (diff + spec) * NdotL * distAtt * spotAtt;
         }
     }
+    
+    float3 color = ApplyHeightFog(radiance, worldPos);
 
-    return float4(radiance, 1.0);
+    return float4(color, 1.0);
 }
 
 float4 PS_Skybox(VSQOut IN) : SV_TARGET

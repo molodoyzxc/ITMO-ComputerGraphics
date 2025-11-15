@@ -212,7 +212,7 @@ private:
     UINT m_depthWidth = 0;               
     UINT m_depthHeight = 0;
 
-    bool m_enableTAA = true;
+    bool m_enableTAA = false;
     UINT m_taaFrameIndex = 0;
     XMFLOAT2 m_taaJitterPix{ 0,0 };
     XMFLOAT2 m_taaJitterPixPrev{ 0,0 };
@@ -248,6 +248,14 @@ private:
     D3D12_RESOURCE_STATES m_velocityState = D3D12_RESOURCE_STATE_RENDER_TARGET;
     D3D12_RESOURCE_STATES m_postAState = D3D12_RESOURCE_STATE_RENDER_TARGET;
     D3D12_RESOURCE_STATES m_postBState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+
+    XMFLOAT3 m_fogColor{ 0.9f, 0.9f, 0.9f };
+    float m_fogDensity = 0.0004f;
+    float m_fogHeightFalloff = 0.05f;
+    float m_fogBaseHeight = 0.0f;    
+    float m_fogMaxOpacity = 1.0f;    
+    bool m_fogEnabled = true;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }

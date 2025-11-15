@@ -10,7 +10,11 @@
 
 using namespace DirectX;
 
-struct CB { XMFLOAT4X4 World, ViewProj; };
+struct CB 
+{
+    XMFLOAT4X4 World;
+    XMFLOAT4X4 ViewProj;
+};
 
 struct LightCB 
 {
@@ -30,9 +34,17 @@ struct LightCB
     XMFLOAT4 ShadowMaskParams;
 };
 
-struct AmbientCB { XMFLOAT4 AmbientColor; };
+struct AmbientCB 
+{
+    XMFLOAT4 AmbientColor;
 
-struct TessCB {
+    XMFLOAT4 FogColorDensity;
+
+    XMFLOAT4 FogParams;
+};
+
+struct TessCB
+{
     XMFLOAT3 cameraPos; float heightScale;
     float minDist; float maxDist;
     float minTess; float maxTess;
@@ -84,7 +96,8 @@ struct PostCB
     float _pad4;       
 };
 
-struct ErrorTextures {
+struct ErrorTextures 
+{
     UINT white{};
     UINT roughness{};
     UINT metallic{};
@@ -191,7 +204,7 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            //"Assets\\SponzaCrytek\\sponza.obj", 
+            "Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
@@ -201,15 +214,16 @@ void RenderingSystem::SetObjects()
             //"Assets\\TestShadows\\wall.obj", 
             //"Assets\\TestShadows\\floor.obj", 
             //"Assets\\Cube\\cube.obj", 
-            "Assets\\Camera\\vintage_video_camera_1k.obj", 
+            //"Assets\\Camera\\vintage_video_camera_1k.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 1000.1f;
+    m_objectScale = 0.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
-    for (auto& obj : m_objects) {
+    for (auto& obj : m_objects) 
+    {
         const size_t L = obj.lodMeshes.size();
         obj.lodVertexBuffers.resize(L);
         obj.lodVertexUploads.resize(L);
@@ -218,7 +232,8 @@ void RenderingSystem::SetObjects()
         obj.lodIndexUploads.resize(L);
         obj.lodIBs.resize(L);
 
-        for (size_t i = 0; i < L; ++i) {
+        for (size_t i = 0; i < L; ++i) 
+        {
             obj.CreateBuffersForMesh(
                 m_framework->GetDevice(),
                 m_framework->GetCommandList(),
@@ -276,13 +291,13 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
     //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
-    std::filesystem::path sceneFolder = L"Assets\\Camera";
+    //std::filesystem::path sceneFolder = L"Assets\\Camera";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -911,7 +926,7 @@ void RenderingSystem::Render()
 
     UpdateTerrainBrush(cmd, dt);
 
-    //TerrainPass();
+    TerrainPass();
 
     {
         D3D12_RESOURCE_DESC depthDesc = m_gbuffer->GetDepthResource()->GetDesc();
@@ -1096,6 +1111,20 @@ void RenderingSystem::UpdateUI()
     
         ImGui::End();
     }
+
+    {
+        ImGui::Begin("Atmosphere");
+
+        ImGui::Checkbox("Enable fog", &m_fogEnabled);
+        ImGui::ColorEdit3("Fog color", &m_fogColor.x);
+
+        ImGui::SliderFloat("Global density", &m_fogDensity, 0.0f, 0.01f, "%.5f");
+        ImGui::SliderFloat("Height falloff", &m_fogHeightFalloff, 0.0f, 0.5f);
+        ImGui::SliderFloat("Base height", &m_fogBaseHeight, -500.0f, 500.0f);
+        ImGui::SliderFloat("Max opacity", &m_fogMaxOpacity, 0.0f, 1.0f);
+
+        ImGui::End();
+    }
 }
 
 void RenderingSystem::BuildViewProj()
@@ -1249,9 +1278,27 @@ void RenderingSystem::UpdateLightCB()
         memcpy(m_pLightData + UINT(i) * lightCBSize, &cb, sizeof(cb));
     }
 
-    AmbientCB amb{};
-    amb.AmbientColor = { 0.1f, 0.1f, 0.1f, 0.0f };
-    memcpy(m_pAmbientData, &amb, sizeof(amb));
+    AmbientCB acb{};
+
+    acb.AmbientColor = XMFLOAT4(0.03f, 0.03f, 0.03f, 1.0f);
+
+    acb.FogColorDensity = XMFLOAT4
+    (
+        m_fogColor.x,
+        m_fogColor.y,
+        m_fogColor.z,
+        m_fogDensity
+    );
+
+    acb.FogParams = XMFLOAT4
+    (
+        m_fogHeightFalloff,
+        m_fogBaseHeight,
+        m_fogMaxOpacity,
+        m_fogEnabled ? 1.0f : 0.0f
+    );
+
+    memcpy(m_pAmbientData, &acb, sizeof(AmbientCB));
 }
 
 void RenderingSystem::UpdatePostCB()
@@ -1786,12 +1833,7 @@ void RenderingSystem::PostProcessPass()
     }
 }
 
-void RenderingSystem::ApplyPassToIntermediate(
-    ID3D12PipelineState* pso,
-    D3D12_GPU_DESCRIPTOR_HANDLE inSrv,
-    ID3D12Resource* dst,
-    D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
-    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
+void RenderingSystem::ApplyPassToIntermediate(ID3D12PipelineState* pso, D3D12_GPU_DESCRIPTOR_HANDLE inSrv, ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
 {
     D3D12_RESOURCE_STATES* pState =
         (dst == m_postA.Get()) ? &m_postAState : &m_postBState;
@@ -2166,15 +2208,7 @@ void RenderingSystem::UploadRegionToGPU(int x0, int y0, int w, int h, ID3D12Grap
     cmd->ResourceBarrier(1, &toSRV);
 }
 
-void RenderingSystem::ApplyTAAToIntermediate(
-    D3D12_GPU_DESCRIPTOR_HANDLE currSrv,
-    D3D12_GPU_DESCRIPTOR_HANDLE historySrv,
-    D3D12_GPU_DESCRIPTOR_HANDLE prevDepthSrv,
-    D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv,
-    D3D12_GPU_DESCRIPTOR_HANDLE velocitySrv,
-    ID3D12Resource* dst,
-    D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
-    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
+void RenderingSystem::ApplyTAAToIntermediate(D3D12_GPU_DESCRIPTOR_HANDLE currSrv, D3D12_GPU_DESCRIPTOR_HANDLE historySrv, D3D12_GPU_DESCRIPTOR_HANDLE prevDepthSrv, D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv, D3D12_GPU_DESCRIPTOR_HANDLE velocitySrv,ID3D12Resource* dst, D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,  D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
 {
     D3D12_RESOURCE_STATES* pState =
         (dst == m_historyA.Get()) ? &m_historyAState : &m_historyBState;
@@ -2205,10 +2239,7 @@ void RenderingSystem::ApplyTAAToIntermediate(
     outSrv = (dst == m_historyA.Get()) ? m_historyASRV : m_historyBSRV;
 }   
 
-void RenderingSystem::DoTAAPass(
-    D3D12_GPU_DESCRIPTOR_HANDLE currLDR,
-    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv,
-    bool writeToHistoryA)
+void RenderingSystem::DoTAAPass(D3D12_GPU_DESCRIPTOR_HANDLE currLDR, D3D12_GPU_DESCRIPTOR_HANDLE& outSrv, bool writeToHistoryA)
 {
     ID3D12Resource* dst = writeToHistoryA ? m_historyA.Get() : m_historyB.Get();
     auto dstRTV = writeToHistoryA ? m_historyARTV : m_historyBRTV;
