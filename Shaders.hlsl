@@ -37,6 +37,22 @@ cbuffer AmbientCB : register(b2)
     float4 FogParams;
 };
 
+cbuffer AtmosphereCB : register(b3)
+{
+    float3 SunDir;
+    float SunIntensity;
+    float3 BetaR;
+    float BetaM;
+    float3 BetaExtR;
+    float BetaExtM;
+    float HR;
+    float HM;
+    float g;
+    float PlanetRadius;
+    float AtmosphereRadius;
+    float _padA0;
+};
+
 cbuffer MaterialCB : register(b4)
 {
     float useNormalMap; // 0 – geometry, 1 – normal map
@@ -377,6 +393,63 @@ float3 ApplyHeightFog(float3 color, float3 worldPos)
     return lerp(color, fogColor, fogAmount);
 }
 
+float RayleighPhase(float cosTheta)
+{
+    return 3.0 / (16.0 * PI) * (1.0 + cosTheta * cosTheta);
+}
+
+float HGPhase(float cosTheta, float g)
+{
+    float g2 = g * g;
+    float denom = pow(max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4), 1.5);
+    return 1.0 / (4.0 * PI) * (1.0 - g2) / denom;
+}
+
+float3 ApplyAerialPerspective(float3 color, float3 worldPos)
+{
+    float3 ro = CameraPos.xyz;
+    float3 rd = worldPos - ro;
+    float dist = length(rd);
+    if (dist < 1e-3)
+        return color;
+    rd /= dist;
+    
+    const int STEPS = 12;
+    float seg = dist / STEPS;
+
+    float opticalR = 0.0;
+    float opticalM = 0.0;
+    
+    for (int i = 0; i < STEPS; ++i)
+    {
+        float t = (i + 0.5) * seg;
+        float3 p = ro + rd * t;
+        
+        float height = max(p.y, 0.0);
+
+        float dR = exp(-height / HR);
+        float dM = exp(-height / HM);
+
+        opticalR += dR * seg;
+        opticalM += dM * seg;
+    }
+    
+    float3 tau = BetaExtR * opticalR + BetaExtM * opticalM;
+    
+    float3 trans = exp(-tau);
+    
+    float cosTheta = dot(rd, SunDir);
+    float phaseR = RayleighPhase(cosTheta);
+    float phaseM = HGPhase(cosTheta, g);
+    
+    float3 skyAlongRay =
+        SunIntensity * (BetaR * phaseR + BetaM.xxx * phaseM);
+    
+    float3 inscatter = skyAlongRay * (1.0 - trans);
+    
+    return color * trans + inscatter;
+}
+
 float4 PS_Ambient(VSQOut IN) : SV_TARGET
 {
     float2 uv = IN.uv;
@@ -418,7 +491,7 @@ float4 PS_Ambient(VSQOut IN) : SV_TARGET
     
     float3 color = (kD * diffuseIBL + specularIBL) * ao * AmbientColor.rgb;
 
-    color = ApplyHeightFog(color, worldPos);
+    color = ApplyAerialPerspective(color, worldPos);
     
     return float4(color, 1.0);
 }
@@ -562,7 +635,7 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
         }
     }
     
-    float3 color = ApplyHeightFog(radiance, worldPos);
+    float3 color = ApplyAerialPerspective(radiance, worldPos);
 
     return float4(color, 1.0);
 }
@@ -576,13 +649,53 @@ float4 PS_Skybox(VSQOut IN) : SV_TARGET
     float2 ndc = float2(2.0 * IN.uv.x - 1.0, 1.0 - 2.0 * IN.uv.y);
     float4 farH = mul(float4(ndc, 1.0, 1.0), InvViewProj);
     float3 worldFar = farH.xyz / max(farH.w, 1e-6);
-    float3 dir = normalize(worldFar - CameraPos.xyz);
+    float3 rd = normalize(worldFar - CameraPos.xyz);
+    float3 ro = CameraPos.xyz;
     
-    float3 sky = gPrefEnv.SampleLevel(samLinear, dir, 0);
+    const float MAX_DIST = 20000.0;
+    const int STEPS = 16;
+    float segment = MAX_DIST / STEPS;
 
-    return float4(sky, 1.0);
+    float3 sumR = 0.0.xxx;
+    float3 sumM = 0.0.xxx;
+
+    float opticalR = 0.0;
+    float opticalM = 0.0;
+
+    for (int i = 0; i < STEPS; ++i)
+    {
+        float t = (i + 0.5) * segment;
+        float3 p = ro + rd * t;
+        
+        float height = max(p.y, 0.0);
+        
+        float dR = exp(-height / HR);
+        float dM = exp(-height / HM);
+        
+        opticalR += dR * segment;
+        opticalM += dM * segment;
+        
+        float3 tau = BetaExtR * opticalR + BetaExtM * opticalM;
+        float3 trans = exp(-tau);
+        
+        sumR += dR * trans * segment;
+        sumM += dM * trans * segment;
+    }
+    
+    float cosTheta = dot(rd, SunDir);
+    float phaseR = RayleighPhase(cosTheta);
+    float phaseM = HGPhase(cosTheta, g);
+    
+    float3 color =
+        SunIntensity * (
+            sumR * BetaR * phaseR +
+            sumM * BetaM.xxx * phaseM
+        );
+    
+    color += 0.03.xxx;
+
+    return float4(color, 1.0);
 }
-
 
 cbuffer PreviewCB : register(b0)
 {

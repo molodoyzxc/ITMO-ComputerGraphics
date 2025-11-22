@@ -138,6 +138,19 @@ struct VelCBData
     float pad0, pad1;
 };
 
+struct AtmosphereCB
+{
+    XMFLOAT3 SunDir; 
+    float SunIntensity;
+    XMFLOAT3 BetaR; 
+    float BetaM;
+    XMFLOAT3 BetaExtR;
+    float BetaExtM;
+    float HR, HM;
+    float g, PlanetRadius;
+    float AtmosphereRadius, pad;
+};
+
 static float Halton(uint32_t index, uint32_t base)
 {
     float f = 1.0f;
@@ -204,7 +217,7 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
@@ -214,7 +227,7 @@ void RenderingSystem::SetObjects()
             //"Assets\\TestShadows\\wall.obj", 
             //"Assets\\TestShadows\\floor.obj", 
             //"Assets\\Cube\\cube.obj", 
-            //"Assets\\Camera\\vintage_video_camera_1k.obj", 
+            "Assets\\Camera\\vintage_video_camera_1k.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
@@ -291,13 +304,13 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
     //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
-    //std::filesystem::path sceneFolder = L"Assets\\Camera";
+    std::filesystem::path sceneFolder = L"Assets\\Camera";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -369,6 +382,16 @@ void RenderingSystem::CreateConstantBuffers()
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_ambientBuffer)));
         CD3DX12_RANGE rr(0, 0);
         m_ambientBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pAmbientData));
+    }
+
+    {
+        const UINT totalSize = Align256(sizeof(AtmosphereCB));
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_atmosphereBuffer)));
+        CD3DX12_RANGE rr(0, 0);
+        m_atmosphereBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pAtmosphereData));
     }
 
     {
@@ -1113,7 +1136,7 @@ void RenderingSystem::UpdateUI()
     }
 
     {
-        ImGui::Begin("Atmosphere");
+        ImGui::Begin("Fog");
 
         ImGui::Checkbox("Enable fog", &m_fogEnabled);
         ImGui::ColorEdit3("Fog color", &m_fogColor.x);
@@ -1122,6 +1145,16 @@ void RenderingSystem::UpdateUI()
         ImGui::SliderFloat("Height falloff", &m_fogHeightFalloff, 0.0f, 0.5f);
         ImGui::SliderFloat("Base height", &m_fogBaseHeight, -500.0f, 500.0f);
         ImGui::SliderFloat("Max opacity", &m_fogMaxOpacity, 0.0f, 1.0f);
+
+        ImGui::End();
+    }
+
+    {
+        ImGui::Begin("Atmosphere");
+
+        ImGui::SliderFloat("Mie K", &m_mieK, 0.0f, 0.001f, "%.6f");
+        ImGui::SliderFloat("Rayleigh K", &m_rayleighK, 0.000001f, 0.001f, "%.6f");
+        ImGui::SliderFloat("Sun intensity", &m_sunIntensity, 0.0f, 100.0f);
 
         ImGui::End();
     }
@@ -1299,6 +1332,31 @@ void RenderingSystem::UpdateLightCB()
     );
 
     memcpy(m_pAmbientData, &acb, sizeof(AmbientCB));
+
+    AtmosphereCB atm{};
+    XMVECTOR sun = XMVector3Normalize(XMLoadFloat3(&direction));
+    XMStoreFloat3(&atm.SunDir, sun);
+    atm.SunIntensity = m_sunIntensity;
+
+    XMFLOAT3 lambda = { 0.680f, 0.550f, 0.440f };
+    auto invPow4 = [&](float l) { return 1.0f / powf(l, 4.0f); };
+    atm.BetaR = { invPow4(lambda.x), invPow4(lambda.y), invPow4(lambda.z) };
+    float Kr = m_rayleighK;
+    atm.BetaR.x *= Kr; atm.BetaR.y *= Kr; atm.BetaR.z *= Kr;
+
+    atm.BetaM = m_mieK;
+
+    atm.BetaExtR = atm.BetaR;
+    atm.BetaExtM = atm.BetaM;
+
+    atm.HR = m_rayleighH;
+    atm.HM = m_mieH;
+    atm.g = m_mieG;
+
+    atm.PlanetRadius = 1.0f;
+    atm.AtmosphereRadius = 1.0f;
+
+    memcpy(m_pAtmosphereData, &atm, sizeof(AtmosphereCB));
 }
 
 void RenderingSystem::UpdatePostCB()
@@ -1417,10 +1475,11 @@ void RenderingSystem::DeferredPass()
     cmd->SetGraphicsRootDescriptorTable(0, m_gbuffer->GetSRVs()[0]);
     cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
     cmd->SetGraphicsRootConstantBufferView(2, m_ambientBuffer->GetGPUVirtualAddress());
-    cmd->SetGraphicsRootDescriptorTable(3, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
-    cmd->SetGraphicsRootDescriptorTable(4, m_shadow->Srv());
-    cmd->SetGraphicsRootDescriptorTable(5, m_ibl.tableStart);
-    cmd->SetGraphicsRootDescriptorTable(6, m_shadowMaskSRV);
+    cmd->SetGraphicsRootConstantBufferView(3, m_atmosphereBuffer->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootDescriptorTable(4, m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart());
+    cmd->SetGraphicsRootDescriptorTable(5, m_shadow->Srv());
+    cmd->SetGraphicsRootDescriptorTable(6, m_ibl.tableStart);
+    cmd->SetGraphicsRootDescriptorTable(7, m_shadowMaskSRV);
 
     cmd->SetPipelineState(m_pipeline.GetSkyPSO());
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -1431,7 +1490,8 @@ void RenderingSystem::DeferredPass()
 
     cmd->SetPipelineState(m_pipeline.GetDeferredPSO());
     const UINT lightCBSize = Align256(sizeof(LightCB));
-    for (size_t i = 0; i < lights.size(); ++i) {
+    for (size_t i = 0; i < lights.size(); ++i)
+    {
         D3D12_GPU_VIRTUAL_ADDRESS cbAddr = m_lightBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * lightCBSize;
         cmd->SetGraphicsRootConstantBufferView(1, cbAddr);
         cmd->DrawInstanced(3, 1, 0, 0);

@@ -46,6 +46,7 @@ private:
     ComPtr<ID3D12Resource> m_constantBuffer;
     ComPtr<ID3D12Resource> m_lightBuffer;
     ComPtr<ID3D12Resource> m_ambientBuffer;
+    ComPtr<ID3D12Resource> m_atmosphereBuffer;
     ComPtr<ID3D12Resource> m_tessBuffer;
     ComPtr<ID3D12Resource> m_materialBuffer;
     ComPtr<ID3D12Resource> m_shadowBuffer;
@@ -54,6 +55,7 @@ private:
     uint8_t* m_pCbData = nullptr;
     uint8_t* m_pLightData = nullptr;
     uint8_t* m_pAmbientData = nullptr;
+    uint8_t* m_pAtmosphereData = nullptr;
     uint8_t* m_pTessCbData = nullptr;
     uint8_t* m_pMaterialData = nullptr;
     uint8_t* m_pShadowCbData = nullptr;
@@ -179,7 +181,7 @@ private:
     4^6 = 4096
     */
     float m_terrainSkirt = 10.0f;
-    float m_screenTau = 1.0f;
+    float m_screenTau = 0.0f;
     float offsetX = 0, offsetZ = 0;
         
     struct TerrainBrush
@@ -256,6 +258,15 @@ private:
     float m_fogBaseHeight = 0.0f;    
     float m_fogMaxOpacity = 1.0f;    
     bool m_fogEnabled = true;
+
+    float m_mieK = 0.00001f;
+    float m_rayleighK = 0.00001f;
+    float m_rayleighH = 500000.0f;
+    float m_mieH = 50000.0f;
+    float m_mieG = 0.1f;
+    float m_planetR = 1.0f;
+    float m_atmHeight = 1.0f;
+    float m_sunIntensity = 20.0f;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
