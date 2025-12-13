@@ -179,12 +179,12 @@ private:
     4^6 = 4096
     */
     float m_terrainSkirt = 10.0f;
-    float m_screenTau = 1.0f;
+    float m_screenTau = 0.0f;
     float offsetX = 0, offsetZ = 0;
         
     struct TerrainBrush
     {
-        bool  enabled = true;
+        bool  enabled = false;
         bool  invert = false;     
         float radiusWorld = 20.0f;
         float strength = 0.15f;   
@@ -255,7 +255,7 @@ private:
     float m_fogHeightFalloff = 0.05f;
     float m_fogBaseHeight = 0.0f;    
     float m_fogMaxOpacity = 1.0f;    
-    bool m_fogEnabled = true;
+    bool m_fogEnabled = false;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }

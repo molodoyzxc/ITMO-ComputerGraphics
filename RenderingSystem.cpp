@@ -41,6 +41,8 @@ struct AmbientCB
     XMFLOAT4 FogColorDensity;
 
     XMFLOAT4 FogParams;
+
+    XMFLOAT4 SunParams;
 };
 
 struct TessCB
@@ -204,7 +206,7 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
@@ -214,12 +216,12 @@ void RenderingSystem::SetObjects()
             //"Assets\\TestShadows\\wall.obj", 
             //"Assets\\TestShadows\\floor.obj", 
             //"Assets\\Cube\\cube.obj", 
-            //"Assets\\Camera\\vintage_video_camera_1k.obj", 
+            "Assets\\Camera\\vintage_video_camera_1k.obj", 
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 0.1f;
+    m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     for (auto& obj : m_objects) 
@@ -291,13 +293,13 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
     //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
-    //std::filesystem::path sceneFolder = L"Assets\\Camera";
+    std::filesystem::path sceneFolder = L"Assets\\Camera";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -1248,26 +1250,100 @@ void RenderingSystem::UpdatePerObjectCBs()
     }
 }
 
+inline float saturate(float x) { return std::clamp(x, 0.0f, 1.0f); }
+inline XMFLOAT2 saturate(const XMFLOAT2& v) { return { saturate(v.x), saturate(v.y) }; }
+inline XMFLOAT3 saturate(const XMFLOAT3& v) { return { saturate(v.x), saturate(v.y), saturate(v.z) }; }
+inline XMFLOAT4 saturate(const XMFLOAT4& v) { return { saturate(v.x), saturate(v.y), saturate(v.z), saturate(v.w) }; }
+
 void RenderingSystem::UpdateLightCB()
 {
     const UINT lightCBSize = Align256(sizeof(LightCB));
     XMMATRIX invVP = XMMatrixInverse(nullptr, viewProj);
 
-    for (size_t i = 0; i < lights.size(); ++i) {
+    XMFLOAT3 sunDir = { 0.0f, 1.0f, 0.0f }; 
+    for (const Light& L : lights)
+    {
+        if (L.type == 0)
+        {
+            sunDir = XMFLOAT3(-L.direction.x, -L.direction.y, -L.direction.z);
+            break;
+        }
+    }
+
+    XMVECTOR sunDirV = XMVector3Normalize(XMLoadFloat3(&sunDir));
+    float sunHeight = XMVectorGetY(sunDirV);
+
+    auto clamp01 = [](float v) -> float
+        {
+            if (v < 0.0f) return 0.0f;
+            if (v > 1.0f) return 1.0f;
+            return v;
+        };
+
+    float sunIntensity = saturate(0.3f + 0.7f * sunHeight);
+
+    sunIntensity = clamp01(sunIntensity);
+
+    float dayFactor = sunIntensity;
+    float nightFactor = 1.0f - dayFactor;
+
+    float absSunH = (sunHeight < 0.0f) ? -sunHeight : sunHeight;
+    float sunsetFactor = clamp01(1.0f - absSunH * 5.0f);
+
+    for (size_t i = 0; i < lights.size(); ++i) 
+    {
         Light& L = lights[i];
         LightCB cb{};
 
         XMStoreFloat4x4(&cb.InvViewProj, invVP);
         cb.Type = L.type;
         cb.LightDir = { L.direction.x, L.direction.y, L.direction.z, 0 };
-        cb.LightColor = { L.color.x, L.color.y, L.color.z, 0 };
+
+        XMFLOAT3 finalColor = L.color;
+
+        if (L.type == 0)
+        {
+            auto lerp3 = [](const XMFLOAT3& a, const XMFLOAT3& b, float t) -> XMFLOAT3
+                {
+                    return XMFLOAT3(
+                        a.x + (b.x - a.x) * t,
+                        a.y + (b.y - a.y) * t,
+                        a.z + (b.z - a.z) * t
+                    );
+                };
+
+            XMFLOAT3 dayCol{ 1.0f, 1.0f, 1.0f };
+            XMFLOAT3 nightCol{ 0.001f, 0.001f, 0.001f };
+            XMFLOAT3 sunsetCol{ 1.0f, 0.1f, 0.1f };
+
+            XMFLOAT3 dnCol = lerp3(nightCol, dayCol, dayFactor);
+            XMFLOAT3 warmCol = lerp3(dnCol, sunsetCol, sunsetFactor);
+
+            float intensity = sunIntensity;
+
+            finalColor.x = warmCol.x * intensity;
+            finalColor.y = warmCol.y * intensity;
+            finalColor.z = warmCol.z * intensity;
+        }
+
+        cb.LightColor = { finalColor.x, finalColor.y, finalColor.z, 0 };
+
         cb.LightPosRange = { L.position.x, L.position.y, L.position.z, L.radius };
         cb.SpotDirInnerCos = { L.spotDirection.x, L.spotDirection.y, L.spotDirection.z, L.innerCone() };
         cb.SpotOuterPad = { L.outerCone(), 0, 0, 0 };
         cb.ScreenSize = { float(m_framework->GetWidth()), float(m_framework->GetHeight()), 0, 0 };
-        for (UINT ci = 0; ci < CSM_CASCADES; ++ci) cb.LightViewProj[ci] = m_lightViewProjCSM[ci];
-        cb.CascadeSplits = { m_cascadeSplits[0], m_cascadeSplits[1], m_cascadeSplits[2],
-                             (CSM_CASCADES > 3 ? m_cascadeSplits[3] : m_cascadeSplits[2]) };
+
+        for (UINT ci = 0; ci < CSM_CASCADES; ++ci)
+            cb.LightViewProj[ci] = m_lightViewProjCSM[ci];
+
+        cb.CascadeSplits = 
+        {
+            m_cascadeSplits[0],
+            m_cascadeSplits[1],
+            m_cascadeSplits[2],
+            (CSM_CASCADES > 3 ? m_cascadeSplits[3] : m_cascadeSplits[2])
+        };
+
         XMStoreFloat4x4(&cb.View, view);
         cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, (float)m_shadow->CascadeCount(), 0 };
 
@@ -1280,7 +1356,13 @@ void RenderingSystem::UpdateLightCB()
 
     AmbientCB acb{};
 
-    acb.AmbientColor = XMFLOAT4(0.03f, 0.03f, 0.03f, 1.0f);
+    const float ambientBase = 0.03f;
+
+    float ambientIntensity = ambientBase * (0.02f + 1.0f * sunIntensity);
+
+    ambientIntensity = saturate(ambientIntensity);
+
+    acb.AmbientColor = XMFLOAT4(ambientIntensity, ambientIntensity, ambientIntensity, 1.0f);
 
     acb.FogColorDensity = XMFLOAT4
     (
@@ -1297,6 +1379,8 @@ void RenderingSystem::UpdateLightCB()
         m_fogMaxOpacity,
         m_fogEnabled ? 1.0f : 0.0f
     );
+
+    acb.SunParams = XMFLOAT4(dayFactor, sunsetFactor, nightFactor, 0.0f);
 
     memcpy(m_pAmbientData, &acb, sizeof(AmbientCB));
 }

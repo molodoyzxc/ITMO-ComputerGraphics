@@ -35,6 +35,7 @@ cbuffer AmbientCB : register(b2)
     float4 AmbientColor;
     float4 FogColorDensity;
     float4 FogParams;
+    float4 SunParams;
 };
 
 cbuffer MaterialCB : register(b4)
@@ -567,6 +568,45 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
     return float4(color, 1.0);
 }
 
+float3 ComputeSkyColor(float3 dir)
+{
+    float dayFactor = SunParams.x;
+    float sunsetFactor = SunParams.y;
+    float nightFactor = SunParams.z;
+
+    float t = saturate(dir.y * 0.5 + 0.5);
+
+    float3 dayZenith = float3(0.1, 0.35, 0.9);
+    float3 dayHorizon = float3(0.7, 0.85, 1.0);
+    float3 nightZenith = float3(0.005, 0.005, 0.012);
+    float3 nightHorizon = float3(0.02, 0.02, 0.06);
+
+    float3 daySky = lerp(dayHorizon, dayZenith, t);
+    float3 nightSky = lerp(nightHorizon, nightZenith, t);
+    float3 baseSky = lerp(nightSky, daySky, dayFactor);
+    
+    float3 sunsetHorizon = float3(1.8, 0.45, 0.15);
+    float3 sunsetZenith = float3(1.2, 0.3, 0.2);
+    float3 sunsetSky = lerp(sunsetHorizon, sunsetZenith, t);
+
+    float3 sky = lerp(baseSky, sunsetSky, sunsetFactor);
+    
+    float horizonGlow = pow(1.0 - abs(dir.y), 2.8) * sunsetFactor * 3.0;
+    sky += float3(1.8, 0.4, 0.1) * horizonGlow;
+    
+    float3 sunDir = normalize(-LightDir.xyz);
+    float sunDot = saturate(dot(dir, sunDir));
+    float sunDisk = pow(sunDot, 1024.0) * 15.0;
+    float sunGlow = pow(sunDot, 6.0) * dayFactor * 2.0;
+    float3 sunColor = lerp(float3(1.0, 0.95, 0.85), float3(1.8, 0.4, 0.1), sunsetFactor);
+    sky += sunColor * (sunDisk + sunGlow);
+    
+    float brightness = lerp(0.15, 1.6, dayFactor + sunsetFactor * 0.7);
+    sky *= brightness;
+
+    return sky;
+}
+
 float4 PS_Skybox(VSQOut IN) : SV_TARGET
 {
     float depth = gDepthTex.SampleLevel(samLinear, IN.uv, 0).r;
@@ -577,12 +617,11 @@ float4 PS_Skybox(VSQOut IN) : SV_TARGET
     float4 farH = mul(float4(ndc, 1.0, 1.0), InvViewProj);
     float3 worldFar = farH.xyz / max(farH.w, 1e-6);
     float3 dir = normalize(worldFar - CameraPos.xyz);
-    
-    float3 sky = gPrefEnv.SampleLevel(samLinear, dir, 0);
+
+    float3 sky = ComputeSkyColor(dir);
 
     return float4(sky, 1.0);
 }
-
 
 cbuffer PreviewCB : register(b0)
 {
