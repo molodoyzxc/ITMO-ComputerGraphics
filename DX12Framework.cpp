@@ -141,6 +141,20 @@ void DX12Framework::CreateDevice()
         if (opt5.RaytracingTier == D3D12_RAYTRACING_TIER_NOT_SUPPORTED)
             throw std::runtime_error("DXR not supported on this GPU");
     }
+
+    m_meshShadersSupported = false;
+
+    D3D12_FEATURE_DATA_SHADER_MODEL sm = { D3D_SHADER_MODEL_6_5 };
+    if (SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &sm, sizeof(sm))) &&
+        sm.HighestShaderModel >= D3D_SHADER_MODEL_6_5)
+    {
+        D3D12_FEATURE_DATA_D3D12_OPTIONS7 opt7 = {};
+        if (SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &opt7, sizeof(opt7))) &&
+            opt7.MeshShaderTier != D3D12_MESH_SHADER_TIER_NOT_SUPPORTED)
+        {
+            m_meshShadersSupported = true;
+        }
+    }
 }
 
 // очередь, allocator, список команд, fence
@@ -218,7 +232,7 @@ void DX12Framework::CreateDescriptorHeaps()
     m_dsvHandle = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
 
     D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
-    srvDesc.NumDescriptors = 100;
+    srvDesc.NumDescriptors = 4096;
     srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&m_srvHeap)));
@@ -389,7 +403,7 @@ void DX12Framework::EndFrame()
     ThrowIfFailed(m_commandList->Close());
     ID3D12CommandList* lists[] = { m_commandList.Get() };
     m_commandQueue->ExecuteCommandLists(_countof(lists), lists);
-    ThrowIfFailed(m_swapChain->Present(1, 0));
+    ThrowIfFailed(m_swapChain->Present(0, 0));
     m_backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
 
     const UINT64 fenceToWaitFor = ++m_fenceValue;

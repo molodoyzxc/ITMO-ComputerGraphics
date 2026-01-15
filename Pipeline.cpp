@@ -8,6 +8,31 @@
 #pragma comment(lib, "d3dcompiler.lib")
 #include <dxcapi.h>
 
+namespace
+{
+    template<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type, typename T>
+    struct alignas(void*) PSOSubobject
+    {
+        D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type = Type;
+        T data;
+    };
+
+    struct MeshGBufferStream
+    {
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, ID3D12RootSignature*> RootSig;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS, D3D12_SHADER_BYTECODE> MS;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, D3D12_SHADER_BYTECODE> PS;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, D3D12_RASTERIZER_DESC> Raster;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, D3D12_BLEND_DESC> Blend;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, D3D12_DEPTH_STENCIL_DESC> Depth;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, D3D12_RT_FORMAT_ARRAY> RTVs;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, DXGI_FORMAT> DSV;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, DXGI_SAMPLE_DESC> Sample;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, UINT> SampleMask;
+        PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY, D3D12_PRIMITIVE_TOPOLOGY_TYPE> Topology;
+    };
+}
+
 inline void ThrowIfFailed(HRESULT hr)
 {
     if (FAILED(hr)) throw std::runtime_error("HRESULT failed");
@@ -82,6 +107,12 @@ void Pipeline::Init()
     ComPtr<IDxcBlob> psVelocity;
     Compile(L"Velocity.hlsl", L"PS_Velocity", L"ps_6_5", psVelocity);
     
+    ComPtr<IDxcBlob> msGBuffer;
+    if (m_framework->IsMeshShaderSupported())
+    {
+        Compile(L"Shaders.hlsl", L"MS_GBuffer", L"ms_6_5", msGBuffer);
+    }
+
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -127,6 +158,31 @@ void Pipeline::Init()
         serializedRS->GetBufferSize(),
         IID_PPV_ARGS(&m_rootSignature)
     ));
+
+    if (m_framework->IsMeshShaderSupported())
+    {
+        CD3DX12_DESCRIPTOR_RANGE meshletRange;
+        meshletRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 2);
+
+        CD3DX12_ROOT_PARAMETER msParams[8];
+        msParams[0].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[2].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[3].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[4].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[5].InitAsConstantBufferView(4, 0, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[6].InitAsShaderResourceView(0, 1, D3D12_SHADER_VISIBILITY_ALL);
+        msParams[7].InitAsDescriptorTable(1, &meshletRange, D3D12_SHADER_VISIBILITY_ALL);
+
+        CD3DX12_ROOT_SIGNATURE_DESC msRSDesc;
+        msRSDesc.Init(_countof(msParams), msParams, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
+
+        ComPtr<ID3DBlob> msRSBlob;
+        ComPtr<ID3DBlob> msRSErr;
+        ThrowIfFailed(D3D12SerializeRootSignature(&msRSDesc, D3D_ROOT_SIGNATURE_VERSION_1, &msRSBlob, &msRSErr));
+        ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(0, msRSBlob->GetBufferPointer(), msRSBlob->GetBufferSize(),
+            IID_PPV_ARGS(&m_meshletRootSignature)));
+    }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC opaqueDesc = {};
     opaqueDesc.InputLayout = { inputLayout, _countof(inputLayout) };
@@ -180,6 +236,36 @@ void Pipeline::Init()
     ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(
         &geoDesc, IID_PPV_ARGS(&m_gBufferPSO)
     ));
+
+    if (m_framework->IsMeshShaderSupported())
+    {
+        MeshGBufferStream s = {};
+        s.RootSig.data = m_meshletRootSignature.Get();
+        s.MS.data = { msGBuffer->GetBufferPointer(), msGBuffer->GetBufferSize() };
+        s.PS.data = { psG->GetBufferPointer(), psG->GetBufferSize() };
+        s.Raster.data = geoDesc.RasterizerState;
+        s.Blend.data = geoDesc.BlendState;
+        s.Depth.data = geoDesc.DepthStencilState;
+
+        D3D12_RT_FORMAT_ARRAY rts = {};
+        rts.NumRenderTargets = 4;
+        rts.RTFormats[0] = geoDesc.RTVFormats[0];
+        rts.RTFormats[1] = geoDesc.RTVFormats[1];
+        rts.RTFormats[2] = geoDesc.RTVFormats[2];
+        rts.RTFormats[3] = geoDesc.RTVFormats[3];
+        s.RTVs.data = rts;
+
+        s.DSV.data = geoDesc.DSVFormat;
+        s.Sample.data = geoDesc.SampleDesc;
+        s.SampleMask.data = geoDesc.SampleMask;
+        s.Topology.data = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+
+        D3D12_PIPELINE_STATE_STREAM_DESC streamDesc = { sizeof(MeshGBufferStream), &s };
+
+        ComPtr<ID3D12Device2> dev2;
+        ThrowIfFailed(m_framework->GetDevice()->QueryInterface(IID_PPV_ARGS(&dev2)));
+        ThrowIfFailed(dev2->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&m_meshletGBufferPSO)));
+    }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC gbTessDesc = geoDesc;
     gbTessDesc.VS = { vsTessBlob->GetBufferPointer(), vsTessBlob->GetBufferSize() };

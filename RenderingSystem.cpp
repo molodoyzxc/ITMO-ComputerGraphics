@@ -7,6 +7,7 @@
 #include "imgui_impl_dx12.h"
 #include "imgui_impl_win32.h"
 #include "ShadowMap.h"
+#include "Meshlets.h"
 
 using namespace DirectX;
 
@@ -217,23 +218,36 @@ void RenderingSystem::SetObjects()
             //"Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
-            //"Assets\\LOD\\bunnyLOD0.obj", 
-            //"Assets\\LOD\\bunnyLOD1.obj", 
-            //"Assets\\LOD\\bunnyLOD2.obj", 
-            //"Assets\\LOD\\bunnyLOD3.obj", 
-            "Assets\\TestShadows\\test.obj", 
+            "Assets\\LOD\\bunnyLOD0.obj", 
+            "Assets\\LOD\\bunnyLOD1.obj", 
+            "Assets\\LOD\\bunnyLOD2.obj", 
+            "Assets\\LOD\\bunnyLOD3.obj", 
+            //"Assets\\TestShadows\\test.obj", 
             //"Assets\\TestShadows\\floor.obj", 
             //"Assets\\Cube\\cube.obj", 
-            //"Assets\\Camera\\vintage_video_camera_1k.obj", 
+            //"Assets\\Camera\\vintage_video_camera_1k.obj",
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
+    for (int i = 0; i < 50; i++)
+    {
+        SceneObject obj = m_objects[0];
+        obj.position.x = m_objects[i].position.x + 1.0f;
+        m_objects.push_back(obj);
+    }
+
     m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
-    for (auto& obj : m_objects) 
+    m_meshletData.clear();
+    m_meshletData.resize(m_objects.size());
+    m_meshletUploads.clear();
+
+    for (size_t objIndex = 0; objIndex < m_objects.size(); ++objIndex)
     {
+        auto& obj = m_objects[objIndex];
+
         const size_t L = obj.lodMeshes.size();
         obj.lodVertexBuffers.resize(L);
         obj.lodVertexUploads.resize(L);
@@ -241,6 +255,8 @@ void RenderingSystem::SetObjects()
         obj.lodIndexBuffers.resize(L);
         obj.lodIndexUploads.resize(L);
         obj.lodIBs.resize(L);
+
+        m_meshletData[objIndex].resize(L);
 
         for (size_t i = 0; i < L; ++i) 
         {
@@ -255,6 +271,57 @@ void RenderingSystem::SetObjects()
                 obj.lodIndexUploads[i],
                 obj.lodIBs[i]
             );
+
+            if (m_framework->IsMeshShaderSupported())
+            {
+                MeshletDrawData& md = m_meshletData[objIndex][i];
+
+                std::vector<uint32_t> idx32;
+                idx32.reserve(obj.lodMeshes[i].indices.size());
+                for (auto v : obj.lodMeshes[i].indices) idx32.push_back((uint32_t)v);
+
+                std::vector<Meshlet> meshlets;
+                std::vector<uint32_t> meshletVerts;
+                std::vector<uint32_t> meshletPrims;
+
+                BuildMeshlets_Greedy(idx32, 64, 126, meshlets, meshletVerts, meshletPrims);
+
+                md.meshletCount = (uint32_t)meshlets.size();
+                if (md.meshletCount != 0)
+                {
+                    if (obj.lodVBs[i].StrideInBytes != sizeof(MeshVertex))
+                        throw std::runtime_error("vertex stride mismatch");
+
+                    ComPtr<ID3D12Resource> up0, up1, up2;
+
+                    m_framework->CreateDefaultBuffer(cmd, meshlets.data(),
+                        (UINT64)meshlets.size() * sizeof(Meshlet), md.meshlets, up0);
+
+                    m_framework->CreateDefaultBuffer(cmd, meshletVerts.data(),
+                        (UINT64)meshletVerts.size() * sizeof(uint32_t), md.meshletVertices, up1);
+
+                    m_framework->CreateDefaultBuffer(cmd, meshletPrims.data(),
+                        (UINT64)meshletPrims.size() * sizeof(uint32_t), md.meshletPrims, up2);
+
+                    md.srvBase = m_framework->AllocateDescriptors(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 4);
+
+                    CreateMeshletSRVs(
+                        m_framework->GetDevice(),
+                        obj.lodVertexBuffers[i].Get(),
+                        md.meshlets.Get(),
+                        md.meshletVertices.Get(),
+                        md.meshletPrims.Get(),
+                        m_framework->GetSrvHeap()->GetCPUDescriptorHandleForHeapStart(),
+                        m_framework->GetSrvDescriptorSize(),
+                        md.srvBase
+                    );
+
+                    m_meshletUploads.push_back(up0);
+                    m_meshletUploads.push_back(up1);
+                    m_meshletUploads.push_back(up2);
+                }
+            }
+
         }
     }
 
@@ -306,8 +373,8 @@ void RenderingSystem::LoadTextures()
     //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
-    //std::filesystem::path sceneFolder = L"Assets\\LOD";
-    std::filesystem::path sceneFolder = L"Assets\\TestShadows";
+    std::filesystem::path sceneFolder = L"Assets\\LOD";
+    //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
     //std::filesystem::path sceneFolder = L"Assets\\Camera";
 
@@ -1007,10 +1074,9 @@ void RenderingSystem::UpdateUI()
         ImGui::Text("Visible objects %d", m_visibleObjects.size());
         ImGui::Text("Frame: %d", m_frameIndex);
 
-        ImGuiIO& io = ImGui::GetIO();
-        ImGui::Text("Mouse %.1f %.1f | Display %.1f %.1f",
-            io.MousePos.x, io.MousePos.y, io.DisplaySize.x, io.DisplaySize.y);
+        ImGui::Text("draw: %d | mesh: %d", drawIndexedCount, meshDispatchCount);
 
+        ImGui::Checkbox("Draw", &tmp);
 
         ImGui::End();
     }
@@ -1024,7 +1090,8 @@ void RenderingSystem::UpdateUI()
         ImGui::SliderFloat("Rot y deg", &m_objectRotationDeg.y, 0.0f, 360.0f);
         ImGui::SliderFloat("Rot z deg", &m_objectRotationDeg.z, 0.0f, 360.0f);
 
-        if (!m_objects.empty()) {
+        if (!m_objects.empty()) 
+        {
             m_objects[objectIdx].rotation = XMFLOAT3(
                 XMConvertToRadians(m_objectRotationDeg.x),
                 XMConvertToRadians(m_objectRotationDeg.y),
@@ -1064,6 +1131,8 @@ void RenderingSystem::UpdateUI()
         ImGui::SliderFloat("Light y", &direction.y, -50.0f, 50.0f);
         ImGui::SliderFloat("Light z", &direction.z, -50.0f, 50.0f);
         lights[0].direction = direction;
+
+        ImGui::InputFloat("Switch shadows mode", &ShadowsMode);
 
         ImGui::End();
     }
@@ -1367,7 +1436,7 @@ void RenderingSystem::UpdateLightCB()
         };
 
         XMStoreFloat4x4(&cb.View, view);
-        cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, (float)m_shadow->CascadeCount(), 1.0f };
+        cb.ShadowParams = { 1.0f / m_shadow->Size(), 0.001f, (float)m_shadow->CascadeCount(), ShadowsMode };
 
         cb.ShadowMaskParams = { m_shadowMaskTiling.x, m_shadowMaskTiling.y, m_shadowMaskStrength, 0.02f };
 
@@ -1442,6 +1511,12 @@ void RenderingSystem::GeometryPass()
 
     cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
 
+    ComPtr<ID3D12GraphicsCommandList6> cmd6;
+    if (m_framework->IsMeshShaderSupported())
+    {
+        cmd->QueryInterface(IID_PPV_ARGS(&cmd6));
+    }
+
     bool switchedToTransparent = false;
 
     const UINT cbSize = Align256(sizeof(CB));
@@ -1471,32 +1546,79 @@ void RenderingSystem::GeometryPass()
         }
 
         const bool useTess = (obj->texIdx[2] != errorTextures.height);
-        if (useTess)
-        {
-            cmd->SetPipelineState(m_wireframe ? m_pipeline.GetGBufferTessellationWireframePSO() : m_pipeline.GetGBufferTessellationPSO());
-            cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
-        }
-        else 
-        {
-            cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
-            cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        }
 
-        cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * cbSize);
-        cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
-        cmd->SetGraphicsRootConstantBufferView(2, m_tessBuffer->GetGPUVirtualAddress());
+        const size_t objIndex = (size_t)(obj - m_objects.data());
+        const bool hasMeshlets =
+            m_framework->IsMeshShaderSupported() &&
+            cmd6 &&
+            objIndex < m_meshletData.size() &&
+            (size_t)lod < m_meshletData[objIndex].size() &&
+            m_meshletData[objIndex][lod].meshletCount != 0;
+
+        bool useMeshPipeline = hasMeshlets && !useTess && (obj->Color.w == 1.0f);
 
         auto srvStart = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
-        cmd->SetGraphicsRootDescriptorTable(3, srvStart);
-
         auto sampStart = m_framework->GetSamplerHeap()->GetGPUDescriptorHandleForHeapStart();
-        cmd->SetGraphicsRootDescriptorTable(4, sampStart);
+        const UINT cbSize = Align256(sizeof(CB));
+        const UINT materialSize = Align256(sizeof(MaterialCB));
 
-        cmd->SetGraphicsRootConstantBufferView(5, m_materialBuffer->GetGPUVirtualAddress() + static_cast<UINT>(i) * materialSize);
+        useMeshPipeline = tmp;
 
-        cmd->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
-        cmd->IASetIndexBuffer(&obj->lodIBs[lod]);
-        cmd->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
+        if (useMeshPipeline)
+        {
+            cmd->SetGraphicsRootSignature(m_pipeline.GetMeshletRS());
+            cmd->SetPipelineState(m_pipeline.GetMeshletGBufferPSO());
+
+            cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress() + (UINT)i * cbSize);
+            cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
+            cmd->SetGraphicsRootConstantBufferView(2, m_tessBuffer->GetGPUVirtualAddress());
+            cmd->SetGraphicsRootDescriptorTable(3, srvStart);
+            cmd->SetGraphicsRootDescriptorTable(4, sampStart);
+            cmd->SetGraphicsRootConstantBufferView(5, m_materialBuffer->GetGPUVirtualAddress() + (UINT)i * materialSize);
+
+            const UINT srvStep = m_framework->GetSrvDescriptorSize();
+            const auto& md = m_meshletData[objIndex][lod];
+            CD3DX12_GPU_DESCRIPTOR_HANDLE meshletTable(srvStart, (INT)md.srvBase, srvStep);
+            cmd->SetGraphicsRootDescriptorTable(7, meshletTable);
+
+            cmd6->DispatchMesh(md.meshletCount, 1, 1);
+            meshDispatchCount++;
+        }
+        else
+        {
+            cmd->SetGraphicsRootSignature(m_pipeline.GetRootSignature());
+
+            if (!switchedToTransparent && obj->Color.w != 1.0f)
+            {
+                cmd->SetPipelineState(m_pipeline.GetTransparentPSO());
+                switchedToTransparent = true;
+            }
+
+            if (useTess)
+            {
+                cmd->SetPipelineState(m_wireframe ? m_pipeline.GetGBufferTessellationWireframePSO()
+                    : m_pipeline.GetGBufferTessellationPSO());
+                cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+            }
+            else
+            {
+                cmd->SetPipelineState(m_pipeline.GetGBufferPSO());
+                cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            }
+
+            cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress() + (UINT)i * cbSize);
+            cmd->SetGraphicsRootConstantBufferView(1, m_lightBuffer->GetGPUVirtualAddress());
+            cmd->SetGraphicsRootConstantBufferView(2, m_tessBuffer->GetGPUVirtualAddress());
+            cmd->SetGraphicsRootDescriptorTable(3, srvStart);
+            cmd->SetGraphicsRootDescriptorTable(4, sampStart);
+            cmd->SetGraphicsRootConstantBufferView(5, m_materialBuffer->GetGPUVirtualAddress() + (UINT)i * materialSize);
+
+            cmd->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
+            cmd->IASetIndexBuffer(&obj->lodIBs[lod]);
+
+            cmd->DrawIndexedInstanced((UINT)obj->lodMeshes[lod].indices.size(), 1, 0, 0, 0);
+            drawIndexedCount++;
+        }
     }
 }
 

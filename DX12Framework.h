@@ -47,7 +47,8 @@ public:
     void ClearColorAndDepthBuffer(float clear[4]);
     void SetViewportAndScissors();
     void SetRootSignatureAndPSO(ID3D12RootSignature* root, ID3D12PipelineState* state);
-    UINT AllocateSrvDescriptor() {
+    UINT AllocateSrvDescriptor() 
+    {
         if (m_nextSrvDescriptor >= m_srvHeap->GetDesc().NumDescriptors)
             throw std::runtime_error("SRV heap is full");
         return m_nextSrvDescriptor++;
@@ -57,7 +58,7 @@ public:
     UINT GetFrameCount() { return FrameCount; }
     UINT& GetBackBufferIndex() { return m_backBufferIndex; }
     HWND GetHwnd() { return m_hwnd; }
-
+    bool IsMeshShaderSupported() const { return m_meshShadersSupported; }
 
 private:
     void CreateDevice();
@@ -95,4 +96,5 @@ private:
     UINT m_whiteSrvIndex = UINT_MAX;
     ComPtr<ID3D12Resource> m_whiteTexture;
     ComPtr<ID3D12Resource> m_whiteUploadBuffer;
+    bool m_meshShadersSupported = false;
 };

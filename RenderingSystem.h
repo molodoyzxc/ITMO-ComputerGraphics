@@ -67,7 +67,7 @@ private:
 
     float m_yaw = 0.f;
     float m_pitch = 0.f;    
-    XMFLOAT3 cameraPos{ -200.0f, 200.0f, 200.0f };
+    XMFLOAT3 cameraPos{ 0.0f, 0.0f, 0.0f };
     float m_near = 0.1f;
     float m_far = 5000.0f;
 
@@ -269,11 +269,28 @@ private:
     UINT m_tlasSrvIndex = UINT_MAX;
     D3D12_GPU_DESCRIPTOR_HANDLE m_tlasSrvGpu{};
     bool m_rtBuilt = false;
+    float ShadowsMode = 0.0f;
     std::vector<ComPtr<ID3D12Resource>> m_blasScratch;
 
     UINT m_tlasInstanceCount = 0;
     UINT64 m_tlasInstanceBytes = 0;
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO m_tlasPrebuild = {};
+
+    struct MeshletDrawData
+    {
+        ComPtr<ID3D12Resource> meshlets;
+        ComPtr<ID3D12Resource> meshletVertices;
+        ComPtr<ID3D12Resource> meshletPrims;
+        uint32_t meshletCount = 0;
+        uint32_t srvBase = 0; 
+    };
+
+    std::vector<std::vector<MeshletDrawData>> m_meshletData;
+    std::vector<ComPtr<ID3D12Resource>> m_meshletUploads;
+
+    UINT drawIndexedCount = 0;
+    UINT meshDispatchCount = 0;
+    bool tmp = false;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
