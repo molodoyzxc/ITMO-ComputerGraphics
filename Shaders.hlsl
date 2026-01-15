@@ -1,3 +1,5 @@
+#include "MeshletMS.hlsl"
+
 cbuffer ObjectCB : register(b0)
 {
     row_major float4x4 World;
@@ -28,6 +30,9 @@ cbuffer LightingCB : register(b1)
     float4 CameraPos;
     
     float4 ShadowMaskParams;
+    
+    uint FrameIndex;
+    float3 _padFrame;
 };
 
 cbuffer AmbientCB : register(b2)
@@ -81,6 +86,8 @@ TextureCube<float3> gPrefEnv : register(t6);
 Texture2D<float2> gBRDFLUT : register(t7);
 
 Texture2D gShadowMask : register(t8);
+
+RaytracingAccelerationStructure gScene : register(t9);
 
 struct VSInput
 {
@@ -382,18 +389,27 @@ float4 PS_Ambient(VSQOut IN) : SV_TARGET
 {
     float2 uv = IN.uv;
     
-    float depth = gDepthTex.SampleLevel(samLinear, uv, 0).r;
+    int2 pix = int2(uv * ScreenSize.xy);
+    pix = clamp(pix, int2(0, 0), int2((int) ScreenSize.x - 1, (int) ScreenSize.y - 1));
+
+    float2 uvCenter = (float2(pix) + 0.5) / ScreenSize.xy;
+    
+    float depth = gDepthTex.Load(int3(pix, 0)).r;
     if (depth >= 1.0)
         discard;
-    float2 ndc = float2(2.0 * uv.x - 1.0, 1.0 - 2.0 * uv.y);
+    
+    float2 ndc = float2(uvCenter.x * 2.0 - 1.0, 1.0 - uvCenter.y * 2.0);
     float4 clipPos = float4(ndc, depth, 1.0);
     float4 worldH = mul(clipPos, InvViewProj);
     float3 worldPos = worldH.xyz / worldH.w;
     
-    float3 baseColor = gAlbedoTex.Sample(samLinear, uv).rgb;
-    float3 N = normalize(gNormalTex.Sample(samLinear, uv).xyz * 2.0 - 1.0);
-
-    float3 params = gParamTex.Sample(samLinear, uv).rgb;
+    float4 baseColor = gAlbedoTex.Load(int3(pix, 0));
+    if (baseColor.a < 0.1)
+        discard;
+    
+    float3 N = normalize(gNormalTex.Load(int3(pix, 0)).xyz * 2.0 - 1.0);
+    float3 params = gParamTex.Load(int3(pix, 0)).rgb;
+    
     float roughness = saturate(params.r);
     float metallic = saturate(params.g);
     float ao = saturate(params.b);
@@ -424,22 +440,160 @@ float4 PS_Ambient(VSQOut IN) : SV_TARGET
     return float4(color, 1.0);
 }
 
+uint HashU32(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+uint ReverseBits32(uint bits)
+{
+    bits = (bits << 16) | (bits >> 16);
+    bits = ((bits & 0x00ff00ffu) << 8) | ((bits & 0xff00ff00u) >> 8);
+    bits = ((bits & 0x0f0f0f0fu) << 4) | ((bits & 0xf0f0f0f0u) >> 4);
+    bits = ((bits & 0x33333333u) << 2) | ((bits & 0xccccccccu) >> 2);
+    bits = ((bits & 0x55555555u) << 1) | ((bits & 0xaaaaaaaau) >> 1);
+    return bits;
+}
+
+float RadicalInverse_VdC(uint bits)
+{
+    return (ReverseBits32(bits) * 2.3283064365386963e-10);
+}
+
+float2 Hammersley(uint i, uint N)
+{
+    return float2((i + 0.5) / (float) N, RadicalInverse_VdC(i));
+}
+
+float Rand01(inout uint s)
+{
+    s = HashU32(s);
+    return (s & 0x00FFFFFFu) / 16777216.0;
+}
+
+float3 OffsetRay(float3 p, float3 n)
+{
+    const float intScale = 256.0f;
+    const float floatScale = 1.0f / 65536.0f;
+    const float origin = 1.0f / 32.0f;
+
+    int3 of = int3(intScale * n);
+
+    float3 pI;
+    pI.x = asfloat(asint(p.x) + ((p.x < 0.0f) ? -of.x : of.x));
+    pI.y = asfloat(asint(p.y) + ((p.y < 0.0f) ? -of.y : of.y));
+    pI.z = asfloat(asint(p.z) + ((p.z < 0.0f) ? -of.z : of.z));
+
+    float3 pF;
+    pF.x = (abs(p.x) < origin) ? p.x + floatScale * n.x : pI.x;
+    pF.y = (abs(p.y) < origin) ? p.y + floatScale * n.y : pI.y;
+    pF.z = (abs(p.z) < origin) ? p.z + floatScale * n.z : pI.z;
+
+    return pF;
+}
+
+void BuildONB(float3 n, out float3 b1, out float3 b2)
+{
+    float sign = (n.z >= 0.0) ? 1.0 : -1.0;
+    float a = -1.0 / (sign + n.z);
+    float b = n.x * n.y * a;
+    b1 = float3(1.0 + sign * n.x * n.x * a, sign * b, -sign * n.x);
+    b2 = float3(b, sign + n.y * n.y * a, -n.y);
+}
+
+float3 SampleCone(float3 axis, float cosThetaMax, float u1, float u2)
+{
+    float cosTheta = lerp(1.0, cosThetaMax, u1);
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float phi = 6.2831853 * u2;
+
+    float3 b1, b2;
+    BuildONB(axis, b1, b2);
+
+    return normalize(b1 * (cos(phi) * sinTheta) +
+                     b2 * (sin(phi) * sinTheta) +
+                     axis * cosTheta);
+}
+
+float TraceShadow(float3 origin, float3 dir, float tMax, float3 worldPos)
+{
+    RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH |
+         RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+         RAY_FLAG_CULL_BACK_FACING_TRIANGLES > q;
+
+    float distToCam = length(worldPos - CameraPos.xyz);
+    float tmin = max(0.001, distToCam * 1e-5);
+
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.TMin = tmin;
+    ray.Direction = dir;
+    ray.TMax = tMax;
+
+    q.TraceRayInline(gScene, 0, 0xFF, ray);
+    while (q.Proceed())
+    {
+    }
+
+    return (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
+}
+
+float RTSoftShadow_Directional(float2 uv, float3 worldPos, float3 N, float3 L)
+{
+    const uint SAMPLES = 4;
+    float cone = ShadowMaskParams.w;
+
+    int2 pix = int2(uv * ScreenSize.xy);
+    uint seed = (uint(pix.x) * 1973u) ^ (uint(pix.y) * 9277u) ^ (FrameIndex * 26699u) ^ 0x68bc21ebu;
+    
+    float2 rot = float2(Rand01(seed), Rand01(seed));
+
+    float cosThetaMax = cos(cone);
+
+    float3 origin = OffsetRay(worldPos, N);
+    float tMax = 10000.0;
+
+    float sum = 0.0;
+    [unroll]
+    for (uint i = 0; i < SAMPLES; ++i)
+    {
+        float2 xi = frac(Hammersley(i, SAMPLES) + rot);
+        float3 dir = SampleCone(L, cosThetaMax, xi.x, xi.y);
+        sum += TraceShadow(origin, dir, tMax, worldPos);
+    }
+    return sum / (float) SAMPLES;
+}
+
 float4 PS_Lighting(VSQOut IN) : SV_TARGET
 {
     float2 uv = IN.uv;
     
-    float depth = gDepthTex.SampleLevel(samLinear, uv, 0).r;
-    float2 ndc = float2(2.0 * uv.x - 1.0, 1.0 - 2.0 * uv.y);
-    float4 clipPos = float4(ndc.x, ndc.y, depth, 1.0);
+    int2 pix = int2(uv * ScreenSize.xy);
+    pix = clamp(pix, int2(0, 0), int2((int) ScreenSize.x - 1, (int) ScreenSize.y - 1));
+    
+    float2 uvCenter = (float2(pix) + 0.5) / ScreenSize.xy;
+    
+    float depth = gDepthTex.Load(int3(pix, 0)).r;
+    if (depth >= 1.0)
+        discard;
+    
+    float2 ndc = float2(uvCenter.x * 2.0 - 1.0, 1.0 - uvCenter.y * 2.0);
+    float4 clipPos = float4(ndc, depth, 1.0);
     float4 worldH = mul(clipPos, InvViewProj);
     float3 worldPos = worldH.xyz / worldH.w;
     
-    float4 albedoTex = gAlbedoTex.Sample(samLinear, uv);
+    float4 albedoTex = gAlbedoTex.Load(int3(pix, 0));
     if (albedoTex.a < 0.1)
         discard;
 
-    float3 N = normalize(gNormalTex.Sample(samLinear, uv).xyz * 2.0 - 1.0);
-    float3 params = gParamTex.Sample(samLinear, uv).rgb;
+    float3 N = normalize(gNormalTex.Load(int3(pix, 0)).xyz * 2.0 - 1.0);
+    float3 params = gParamTex.Load(int3(pix, 0)).rgb;
+    
     float roughness = saturate(params.r);
     float metallic = saturate(params.g);
     float ao = saturate(params.b);
@@ -458,10 +612,14 @@ float4 PS_Lighting(VSQOut IN) : SV_TARGET
         float3 L = normalize(-LightDir.xyz);
         float3 H = normalize(V + L);
         NdotL = saturate(dot(N, L));
-
+        
         uint cascadeIdx = ChooseCascade(worldPos);
-        shadow = PCF_Shadow(worldPos, cascadeIdx);
 
+        if (ShadowParams.w > 0.5)
+            shadow = RTSoftShadow_Directional(uv, worldPos, N, L);
+        else
+            shadow = PCF_Shadow(worldPos, cascadeIdx);
+        
         {
             float2 tiling = ShadowMaskParams.xy;
             float strength = saturate(ShadowMaskParams.z); 

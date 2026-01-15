@@ -51,7 +51,7 @@ void SceneObject::CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList*
         CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
             vertexBuffer.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
+            D3D12_RESOURCE_STATE_GENERIC_READ
         );
         cmdList->ResourceBarrier(1, &barrier);
     }
@@ -90,7 +90,7 @@ void SceneObject::CreateBuffers(ID3D12Device* device, ID3D12GraphicsCommandList*
         CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
             indexBuffer.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_INDEX_BUFFER
+            D3D12_RESOURCE_STATE_GENERIC_READ
         );
         cmdList->ResourceBarrier(1, &barrier);
     }
@@ -167,7 +167,7 @@ void SceneObject::CreateBuffersForMesh(
         CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
             outVB.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER
+            D3D12_RESOURCE_STATE_GENERIC_READ
         );
         cmdList->ResourceBarrier(1, &barrier);
     }
@@ -203,7 +203,7 @@ void SceneObject::CreateBuffersForMesh(
         CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
             outIB.Get(),
             D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_INDEX_BUFFER
+            D3D12_RESOURCE_STATE_GENERIC_READ
         );
         cmdList->ResourceBarrier(1, &barrier);
     }

@@ -9,13 +9,15 @@
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
-    Window window(hInstance, nCmdShow, L"DirectX12", 1600.0f, 900.0f);
+    ImGui_ImplWin32_EnableDpiAwareness();
+
+    Window window(hInstance, nCmdShow, L"DirectX12", 1920.0f, 1080.0f);
 
     DX12Framework framework(window.GetHwnd(), window.GetWidth(), window.GetHeight());
     framework.Init();
 
-    ImGui_ImplWin32_EnableDpiAwareness();
-    float main_scale = ImGui_ImplWin32_GetDpiScaleForMonitor(::MonitorFromPoint(POINT{ 0, 0 }, MONITOR_DEFAULTTOPRIMARY));
+    float main_scale = ImGui_ImplWin32_GetDpiScaleForHwnd(window.GetHwnd());
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;

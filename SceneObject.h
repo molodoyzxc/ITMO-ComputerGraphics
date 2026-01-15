@@ -38,7 +38,7 @@ struct SceneObject {
     std::vector<Mesh> lodMeshes;
     std::vector<ComPtr<ID3D12Resource>> lodVertexBuffers;
     std::vector<ComPtr<ID3D12Resource>> lodVertexUploads;
-    std::vector<D3D12_VERTEX_BUFFER_VIEW>             lodVBs;
+    std::vector<D3D12_VERTEX_BUFFER_VIEW> lodVBs;
 
     std::vector<ComPtr<ID3D12Resource>> lodIndexBuffers;
     std::vector<ComPtr<ID3D12Resource>> lodIndexUploads;
@@ -60,7 +60,7 @@ struct SceneObject {
         this->scale = scale;
     }
 
-    DirectX::XMMATRIX GetWorldMatrix() const
+    XMMATRIX GetWorldMatrix() const
     {
         return
             XMMatrixRotationRollPitchYaw(rotation.x, rotation.y, rotation.z) *
@@ -82,12 +82,16 @@ public:
         D3D12_INDEX_BUFFER_VIEW& outIBView
     );
 
-    void EnsureDefaultLOD() {
-        if (lodMeshes.empty()) {
+    void EnsureDefaultLOD() 
+    {
+        if (lodMeshes.empty()) 
+        {
             lodMeshes.resize(1);
             lodMeshes[0] = mesh;
         }
-        if (lodDistances.empty()) {
+
+        if (lodDistances.empty()) 
+        {
             lodDistances = { 0.0f };
         }
     }

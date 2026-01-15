@@ -134,6 +134,13 @@ void DX12Framework::CreateDevice()
         filter.DenyList.pIDList = denyIds;
         infoQueue->AddStorageFilterEntries(&filter);
     }
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 opt5{};
+    if (SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &opt5, sizeof(opt5))))
+    {
+        if (opt5.RaytracingTier == D3D12_RAYTRACING_TIER_NOT_SUPPORTED)
+            throw std::runtime_error("DXR not supported on this GPU");
+    }
 }
 
 // очередь, allocator, список команд, fence

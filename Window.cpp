@@ -8,19 +8,34 @@ Window::Window(HINSTANCE hInstance, int nCmdShow,
 {
     RegisterWindowClass();
 
+    DWORD style = WS_OVERLAPPEDWINDOW;
+    DWORD exStyle = 0;
+
+    RECT rc = { 0, 0, (LONG)width_, (LONG)height_ };
+    AdjustWindowRectEx(&rc, style, FALSE, exStyle);
+
+    int winW = rc.right - rc.left;
+    int winH = rc.bottom - rc.top;
+
+
     hWnd_ = CreateWindowEx(
         0,
         className_,             
         title_.c_str(),         
         WS_OVERLAPPEDWINDOW,    
         CW_USEDEFAULT, CW_USEDEFAULT,
-        width_, height_,        
+        winW, winH,
         nullptr, nullptr,       
         hInstance_,             
         this                    
     );
 
     ShowWindow(hWnd_, nCmdShow);
+
+    RECT cr{};
+    GetClientRect(hWnd_, &cr);
+    width_ = float(cr.right - cr.left);
+    height_ = float(cr.bottom - cr.top);
 
     input_ = new InputDevice(hWnd_);
 
@@ -119,6 +134,21 @@ inline LRESULT Window::WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lP
 
         return 0;
     }
+    case WM_DPICHANGED:
+    {
+        const RECT* r = (const RECT*)lParam;
+        SetWindowPos(hWnd, nullptr, r->left, r->top,
+            r->right - r->left, r->bottom - r->top,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        return 0;
+    }
+    case WM_SIZE:
+    {
+        width_ = float(LOWORD(lParam));
+        height_ = float(HIWORD(lParam));
+        return 0;
+    }
+
 
     default:
         return DefWindowProc(hWnd, message, wParam, lParam);

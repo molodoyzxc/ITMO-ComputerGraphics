@@ -39,6 +39,8 @@ private:
     std::unique_ptr <ShadowMap> m_shadow;
     Timer timer;
 
+    uint32_t m_frameIndex = 0;
+
     std::vector<SceneObject> m_objects;
     std::vector<SceneObject*> m_visibleObjects;
     std::vector<Light> lights;
@@ -257,6 +259,22 @@ private:
     float m_fogMaxOpacity = 1.0f;    
     bool m_fogEnabled = false;
 
+    bool m_blasBuilt = false;
+
+    std::vector<ComPtr<ID3D12Resource>> m_blas;
+    ComPtr<ID3D12Resource> m_tlas;
+    ComPtr<ID3D12Resource> m_tlasScratch;
+    ComPtr<ID3D12Resource> m_tlasInstanceUpload;
+
+    UINT m_tlasSrvIndex = UINT_MAX;
+    D3D12_GPU_DESCRIPTOR_HANDLE m_tlasSrvGpu{};
+    bool m_rtBuilt = false;
+    std::vector<ComPtr<ID3D12Resource>> m_blasScratch;
+
+    UINT m_tlasInstanceCount = 0;
+    UINT64 m_tlasInstanceBytes = 0;
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO m_tlasPrebuild = {};
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
@@ -329,4 +347,9 @@ private:
     void UpdateTAACB();
     void CopyDepthToPrev();
     void TransitionResource(ID3D12GraphicsCommandList* cmd, ID3D12Resource* res, D3D12_RESOURCE_STATES& current, D3D12_RESOURCE_STATES target);
+
+    void BuildRaytracingAS();
+    void UpdateRaytracingTLAS();
+    void BuildBLAS_Once(ID3D12Device5* device5, ID3D12GraphicsCommandList4* cmd4);
+    void BuildOrUpdateTLAS(ID3D12Device5* device5, ID3D12GraphicsCommandList4* cmd4, bool update);
 };

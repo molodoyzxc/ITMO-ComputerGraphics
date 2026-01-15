@@ -26,62 +26,62 @@ void Pipeline::Init()
 #endif
 
     ComPtr<IDxcBlob> vsBlob, psBlob, vsG, psG, vsQuad, psLight, psAmbientBlob;
-    Compile(L"Shaders.hlsl", L"VSMain", L"vs_6_0", vsBlob);
-    Compile(L"Shaders.hlsl", L"PSMain", L"ps_6_0", psBlob);
-    Compile(L"Shaders.hlsl", L"VS_GBuffer", L"vs_6_0", vsG);
-    Compile(L"Shaders.hlsl", L"PS_GBuffer", L"ps_6_0", psG);
-    Compile(L"Shaders.hlsl", L"VS_Quad", L"vs_6_0", vsQuad);
-    Compile(L"Shaders.hlsl", L"PS_Lighting", L"ps_6_0", psLight);
-    Compile(L"Shaders.hlsl", L"PS_Ambient", L"ps_6_0", psAmbientBlob);
+    Compile(L"Shaders.hlsl", L"VSMain", L"vs_6_5", vsBlob);
+    Compile(L"Shaders.hlsl", L"PSMain", L"ps_6_5", psBlob);
+    Compile(L"Shaders.hlsl", L"VS_GBuffer", L"vs_6_5", vsG);
+    Compile(L"Shaders.hlsl", L"PS_GBuffer", L"ps_6_5", psG);
+    Compile(L"Shaders.hlsl", L"VS_Quad", L"vs_6_5", vsQuad);
+    Compile(L"Shaders.hlsl", L"PS_Lighting", L"ps_6_5", psLight);
+    Compile(L"Shaders.hlsl", L"PS_Ambient", L"ps_6_5", psAmbientBlob);
 
     ComPtr<IDxcBlob> vsTessBlob, hsTessBlob, dsTessBlob;
-    Compile(L"Tessellation.hlsl", L"VSMain", L"vs_6_0", vsTessBlob);
-    Compile(L"Tessellation.hlsl", L"HSMain", L"hs_6_0", hsTessBlob);
-    Compile(L"Tessellation.hlsl", L"DSMain", L"ds_6_0", dsTessBlob);
+    Compile(L"Tessellation.hlsl", L"VSMain", L"vs_6_5", vsTessBlob);
+    Compile(L"Tessellation.hlsl", L"HSMain", L"hs_6_5", hsTessBlob);
+    Compile(L"Tessellation.hlsl", L"DSMain", L"ds_6_5", dsTessBlob);
 
     ComPtr<IDxcBlob> vsShadow;
-    Compile(L"Shaders.hlsl", L"VS_Shadow", L"vs_6_0", vsShadow);
+    Compile(L"Shaders.hlsl", L"VS_Shadow", L"vs_6_5", vsShadow);
 
     ComPtr<IDxcBlob> vsGPart, psGPart;
-    Compile(L"Shaders.hlsl", L"VS_GBufferParticle", L"vs_6_0", vsGPart);
-    Compile(L"Shaders.hlsl", L"PS_GBufferParticle", L"ps_6_0", psGPart);
+    Compile(L"Shaders.hlsl", L"VS_GBufferParticle", L"vs_6_5", vsGPart);
+    Compile(L"Shaders.hlsl", L"PS_GBufferParticle", L"ps_6_5", psGPart);
 
     ComPtr<IDxcBlob> csUpdate, csEmit;
-    Compile(L"ParticlesCS.hlsl", L"CS_Update", L"cs_6_0", csUpdate);
-    Compile(L"ParticlesCS.hlsl", L"CS_Emit", L"cs_6_0", csEmit);
+    Compile(L"ParticlesCS.hlsl", L"CS_Update", L"cs_6_5", csUpdate);
+    Compile(L"ParticlesCS.hlsl", L"CS_Emit", L"cs_6_5", csEmit);
 
     ComPtr<IDxcBlob> psSkybox;
-    Compile(L"Shaders.hlsl", L"PS_Skybox", L"ps_6_0", psSkybox);
+    Compile(L"Shaders.hlsl", L"PS_Skybox", L"ps_6_5", psSkybox);
 
     ComPtr<IDxcBlob> psCopyHDRtoLDR, psCopyLDR;
     ComPtr<IDxcBlob> psTonemap, psGamma, psVignette;
     ComPtr<IDxcBlob> psInvert, psGrayscale, psPixelate, psPosterize, psSaturation;
 
-    Compile(L"PostEffects.hlsl", L"PS_CopyHDRtoLDR", L"ps_6_0", psCopyHDRtoLDR);
-    Compile(L"PostEffects.hlsl", L"PS_CopyLDR", L"ps_6_0", psCopyLDR);
+    Compile(L"PostEffects.hlsl", L"PS_CopyHDRtoLDR", L"ps_6_5", psCopyHDRtoLDR);
+    Compile(L"PostEffects.hlsl", L"PS_CopyLDR", L"ps_6_5", psCopyLDR);
 
-    Compile(L"PostEffects.hlsl", L"PS_Tonemap", L"ps_6_0", psTonemap);
-    Compile(L"PostEffects.hlsl", L"PS_Gamma", L"ps_6_0", psGamma);
-    Compile(L"PostEffects.hlsl", L"PS_Vignette", L"ps_6_0", psVignette);
+    Compile(L"PostEffects.hlsl", L"PS_Tonemap", L"ps_6_5", psTonemap);
+    Compile(L"PostEffects.hlsl", L"PS_Gamma", L"ps_6_5", psGamma);
+    Compile(L"PostEffects.hlsl", L"PS_Vignette", L"ps_6_5", psVignette);
 
-    Compile(L"PostEffects.hlsl", L"PS_Invert", L"ps_6_0", psInvert);
-    Compile(L"PostEffects.hlsl", L"PS_Grayscale", L"ps_6_0", psGrayscale);
-    Compile(L"PostEffects.hlsl", L"PS_Pixelate", L"ps_6_0", psPixelate);
-    Compile(L"PostEffects.hlsl", L"PS_Posterize", L"ps_6_0", psPosterize);
-    Compile(L"PostEffects.hlsl", L"PS_Saturation", L"ps_6_0", psSaturation);
+    Compile(L"PostEffects.hlsl", L"PS_Invert", L"ps_6_5", psInvert);
+    Compile(L"PostEffects.hlsl", L"PS_Grayscale", L"ps_6_5", psGrayscale);
+    Compile(L"PostEffects.hlsl", L"PS_Pixelate", L"ps_6_5", psPixelate);
+    Compile(L"PostEffects.hlsl", L"PS_Posterize", L"ps_6_5", psPosterize);
+    Compile(L"PostEffects.hlsl", L"PS_Saturation", L"ps_6_5", psSaturation);
 
     ComPtr<IDxcBlob> psPreview;
-    Compile(L"Shaders.hlsl", L"PS_PreviewGBuffer", L"ps_6_0", psPreview);
+    Compile(L"Shaders.hlsl", L"PS_PreviewGBuffer", L"ps_6_5", psPreview);
 
     ComPtr<IDxcBlob> vsTerrain, psTerrain;
-    Compile(L"Terrain.hlsl", L"VS_TerrainGBuffer", L"vs_6_0", vsTerrain);
-    Compile(L"Terrain.hlsl", L"PS_TerrainGBuffer", L"ps_6_0", psTerrain);
+    Compile(L"Terrain.hlsl", L"VS_TerrainGBuffer", L"vs_6_5", vsTerrain);
+    Compile(L"Terrain.hlsl", L"PS_TerrainGBuffer", L"ps_6_5", psTerrain);
 
     ComPtr<IDxcBlob> psTAA;
-    Compile(L"TAA.hlsl", L"PS_TAA", L"ps_6_0", psTAA);
+    Compile(L"TAA.hlsl", L"PS_TAA", L"ps_6_5", psTAA);
     ComPtr<IDxcBlob> psVelocity;
-    Compile(L"Velocity.hlsl", L"PS_Velocity", L"ps_6_0", psVelocity);
-
+    Compile(L"Velocity.hlsl", L"PS_Velocity", L"ps_6_5", psVelocity);
+    
     D3D12_INPUT_ELEMENT_DESC inputLayout[] = 
     {
         { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -197,16 +197,17 @@ void Pipeline::Init()
         &gbTessWireDesc, IID_PPV_ARGS(&m_gBufferTessellationWireframePSO)
     ));
 
-    CD3DX12_DESCRIPTOR_RANGE defSrvRanges[4];
+     CD3DX12_DESCRIPTOR_RANGE defSrvRanges[5];
     defSrvRanges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0);
     defSrvRanges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);
     defSrvRanges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 3, 5);
     defSrvRanges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 8);
+    defSrvRanges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 9);
 
     CD3DX12_DESCRIPTOR_RANGE defSampRange;
     defSampRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 2, 0);
 
-    CD3DX12_ROOT_PARAMETER defParams[7];
+    CD3DX12_ROOT_PARAMETER defParams[8];
     defParams[0].InitAsDescriptorTable(1, &defSrvRanges[0], D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[2].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_PIXEL);
@@ -214,6 +215,7 @@ void Pipeline::Init()
     defParams[4].InitAsDescriptorTable(1, &defSrvRanges[1], D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[5].InitAsDescriptorTable(1, &defSrvRanges[2], D3D12_SHADER_VISIBILITY_PIXEL);
     defParams[6].InitAsDescriptorTable(1, &defSrvRanges[3], D3D12_SHADER_VISIBILITY_PIXEL);
+    defParams[7].InitAsDescriptorTable(1, &defSrvRanges[4], D3D12_SHADER_VISIBILITY_PIXEL);
 
     CD3DX12_ROOT_SIGNATURE_DESC deferredRSDesc;
     deferredRSDesc.Init(
@@ -630,11 +632,19 @@ void Pipeline::Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcB
     ComPtr<IDxcBlobEncoding> source;
     library->CreateBlobFromFile(file, nullptr, &source);
     ComPtr<IDxcOperationResult> result;
+
+    LPCWSTR args[] = 
+    {
+        L"-HV",
+        L"2021",
+    };
+
     compiler->Compile(
         source.Get(),
         file,
         entry, target,
-        nullptr, 0, nullptr, 0, nullptr,
+        args, _countof(args),
+        nullptr, 0, nullptr,
         &result
     );
     HRESULT hr;
