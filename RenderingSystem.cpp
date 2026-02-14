@@ -218,24 +218,18 @@ void RenderingSystem::SetObjects()
             //"Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
-            "Assets\\LOD\\bunnyLOD0.obj", 
-            "Assets\\LOD\\bunnyLOD1.obj", 
-            "Assets\\LOD\\bunnyLOD2.obj", 
-            "Assets\\LOD\\bunnyLOD3.obj", 
-            //"Assets\\TestShadows\\test.obj", 
+            //"Assets\\LOD\\bunnyLOD0.obj", 
+            //"Assets\\LOD\\bunnyLOD1.obj", 
+            //"Assets\\LOD\\bunnyLOD2.obj", 
+            //"Assets\\LOD\\bunnyLOD3.obj", 
+            "Assets\\TestShadows\\test.obj", 
             //"Assets\\TestShadows\\floor.obj", 
+            //"Assets\\TestShadows\\TestRT.obj", 
             //"Assets\\Cube\\cube.obj", 
             //"Assets\\Camera\\vintage_video_camera_1k.obj",
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
-
-    for (int i = 0; i < 50; i++)
-    {
-        SceneObject obj = m_objects[0];
-        obj.position.x = m_objects[i].position.x + 1.0f;
-        m_objects.push_back(obj);
-    }
 
     m_objectScale = 1.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
@@ -373,8 +367,8 @@ void RenderingSystem::LoadTextures()
     //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
-    std::filesystem::path sceneFolder = L"Assets\\LOD";
-    //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
+    //std::filesystem::path sceneFolder = L"Assets\\LOD";
+    std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
     //std::filesystem::path sceneFolder = L"Assets\\Camera";
 
@@ -947,6 +941,7 @@ void RenderingSystem::Initialize()
 
 void RenderingSystem::Update(float)
 {
+    m_frameIndex++;
     dt = timer.GetElapsedSeconds();
 
     if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
@@ -966,7 +961,43 @@ void RenderingSystem::Update(float)
     CountFPS();
     KeyboardControl();
 
-    m_frameIndex++;
+    if (m_autoSun && !lights.empty())
+    {
+        if (m_dayLengthSec < 0.001f) m_dayLengthSec = 0.001f;
+        m_timeOfDaySec += dt;
+        while (m_timeOfDaySec >= m_dayLengthSec) m_timeOfDaySec -= m_dayLengthSec;
+        while (m_timeOfDaySec < 0.0f) m_timeOfDaySec += m_dayLengthSec;
+
+        const float phase = m_timeOfDaySec / m_dayLengthSec;
+
+        const float angle = phase * XM_2PI + XM_PIDIV2;
+
+        const float elev = sinf(angle);
+        const float horiz = cosf(angle);
+
+        const float az = XMConvertToRadians(m_sunAzimuthDeg);
+
+        XMFLOAT3 sunPos =
+        {
+            horiz * cosf(az),
+            elev,
+            horiz * sinf(az)
+        };
+
+        XMFLOAT3 sunDir =
+        {
+            -sunPos.x,
+            -sunPos.y,
+            -sunPos.z
+        };
+
+        XMVECTOR v = XMVector3Normalize(XMLoadFloat3(&sunDir));
+        XMStoreFloat3(&sunDir, v);
+
+        lights[0].direction = sunDir;
+        direction = sunDir;
+        lights[0].type = 0;
+    }
 }
 
 void RenderingSystem::Render()
@@ -1127,10 +1158,28 @@ void RenderingSystem::UpdateUI()
     {
         ImGui::Begin("Light");
 
-        ImGui::SliderFloat("Light x", &direction.x, -50.0f, 50.0f);
-        ImGui::SliderFloat("Light y", &direction.y, -50.0f, 50.0f);
-        ImGui::SliderFloat("Light z", &direction.z, -50.0f, 50.0f);
-        lights[0].direction = direction;
+        ImGui::Checkbox("Auto day/night", &m_autoSun);
+
+        if (m_autoSun)
+        {
+            ImGui::SliderFloat("Day length (sec)", &m_dayLengthSec, 5.0f, 300.0f);
+            ImGui::SliderFloat("Sun azimuth (deg)", &m_sunAzimuthDeg, 0.0f, 360.0f);
+
+            float phase = (m_dayLengthSec > 0.001f) ? (m_timeOfDaySec / m_dayLengthSec) : 0.0f;
+            if (ImGui::SliderFloat("Time of day", &phase, 0.0f, 1.0f))
+            {
+                m_timeOfDaySec = phase * m_dayLengthSec;
+            }
+                
+            ImGui::Text("SunDir: %.3f %.3f %.3f", direction.x, direction.y, direction.z);
+        }
+        else
+        {
+            ImGui::SliderFloat("Light x", &direction.x, -50.0f, 50.0f);
+            ImGui::SliderFloat("Light y", &direction.y, -50.0f, 50.0f);
+            ImGui::SliderFloat("Light z", &direction.z, -50.0f, 50.0f);
+            lights[0].direction = direction;
+        }
 
         ImGui::InputFloat("Switch shadows mode", &ShadowsMode);
 
@@ -2713,10 +2762,13 @@ void RenderingSystem::BuildOrUpdateTLAS(ID3D12Device5* device5, ID3D12GraphicsCo
         inst.AccelerationStructure = m_blas[i]->GetGPUVirtualAddress();
 
         XMMATRIX W = m_objects[i].GetWorldMatrix();
-        XMFLOAT4X4 wf; XMStoreFloat4x4(&wf, XMMatrixTranspose(W));
+        XMFLOAT4X4 wf; 
+        XMStoreFloat4x4(&wf, XMMatrixTranspose(W));
+
         inst.Transform[0][0] = wf._11; inst.Transform[0][1] = wf._12; inst.Transform[0][2] = wf._13; inst.Transform[0][3] = wf._14;
         inst.Transform[1][0] = wf._21; inst.Transform[1][1] = wf._22; inst.Transform[1][2] = wf._23; inst.Transform[1][3] = wf._24;
         inst.Transform[2][0] = wf._31; inst.Transform[2][1] = wf._32; inst.Transform[2][2] = wf._33; inst.Transform[2][3] = wf._34;
+
 
         instances.push_back(inst);
     }

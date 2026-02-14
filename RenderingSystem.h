@@ -290,7 +290,12 @@ private:
 
     UINT drawIndexedCount = 0;
     UINT meshDispatchCount = 0;
-    bool tmp = false;
+    bool tmp = true;
+
+    bool  m_autoSun = false;
+    float m_dayLengthSec = 60.0f;
+    float m_timeOfDaySec = 0.0f;
+    float m_sunAzimuthDeg = 0.0f;
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }

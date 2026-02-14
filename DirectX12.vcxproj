@@ -144,6 +144,7 @@
     <ClCompile Include="InputDevice.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Meshes.cpp" />
+    <ClCompile Include="Meshlets.cpp" />
     <ClCompile Include="ParticleSystem.cpp" />
     <ClCompile Include="Pipeline.cpp" />
     <ClCompile Include="RenderingSystem.cpp" />
@@ -178,6 +179,7 @@
     <ClInclude Include="Light.h" />
     <ClInclude Include="Material.h" />
     <ClInclude Include="Meshes.h" />
+    <ClInclude Include="Meshlets.h" />
     <ClInclude Include="Octree.h" />
     <ClInclude Include="ParticleSystem.h" />
     <ClInclude Include="Pipeline.h" />
@@ -229,6 +231,11 @@
   </ItemGroup>
   <ItemGroup>
     <Text Include="Velocity.hlsl">
+      <FileType>Document</FileType>
+    </Text>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="MeshletMS.hlsl">
       <FileType>Document</FileType>
     </Text>
   </ItemGroup>
