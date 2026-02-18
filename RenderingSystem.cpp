@@ -149,6 +149,17 @@ struct VelCBData
     float pad0, pad1;
 };
 
+struct AlphaShadowCBData
+{
+    uint32_t GrassInstanceID;
+    uint32_t GrassUsesXZ;
+    float GrassAlphaCutoff;
+    float _pad0;
+
+    XMFLOAT2 GrassUvScale;
+    XMFLOAT2 GrassUvOffset;
+};
+
 static float Halton(uint32_t index, uint32_t base)
 {
     float f = 1.0f;
@@ -222,9 +233,9 @@ void RenderingSystem::SetObjects()
             //"Assets\\LOD\\bunnyLOD1.obj", 
             //"Assets\\LOD\\bunnyLOD2.obj", 
             //"Assets\\LOD\\bunnyLOD3.obj", 
-            "Assets\\TestShadows\\test.obj", 
+            //"Assets\\TestShadows\\test.obj", 
             //"Assets\\TestShadows\\floor.obj", 
-            //"Assets\\TestShadows\\TestRT.obj", 
+            "Assets\\TestShadows\\TestRT.obj", 
             //"Assets\\Cube\\cube.obj", 
             //"Assets\\Camera\\vintage_video_camera_1k.obj",
         },
@@ -566,6 +577,8 @@ void RenderingSystem::Initialize()
 
     LoadErrorTextures();
     LoadTextures();
+
+    InitAlphaShadowDemoResources();
 
     auto depthDesc = m_gbuffer->GetDepthResource()->GetDesc();
     m_depthWidth = static_cast<UINT>(depthDesc.Width);
@@ -1123,7 +1136,8 @@ void RenderingSystem::UpdateUI()
 
         if (!m_objects.empty()) 
         {
-            m_objects[objectIdx].rotation = XMFLOAT3(
+            m_objects[objectIdx].rotation = XMFLOAT3
+            (
                 XMConvertToRadians(m_objectRotationDeg.x),
                 XMConvertToRadians(m_objectRotationDeg.y),
                 XMConvertToRadians(m_objectRotationDeg.z)
@@ -1263,6 +1277,22 @@ void RenderingSystem::UpdateUI()
         ImGui::SliderFloat("Base height", &m_fogBaseHeight, -500.0f, 500.0f);
         ImGui::SliderFloat("Max opacity", &m_fogMaxOpacity, 0.0f, 1.0f);
 
+        ImGui::End();
+    }
+
+    {
+        ImGui::Begin("RT alpha");
+        int prev = m_grassObjectIndex;
+        ImGui::InputInt("Grass obj index", &m_grassObjectIndex);
+
+        ImGui::Checkbox("UV from XZ", (bool*)&m_grassUsesXZ);
+        ImGui::InputFloat2("UV scale", (float*)&m_grassUvScale);
+        ImGui::InputFloat2("UV offset", (float*)&m_grassUvOffset);
+
+        if (m_grassObjectIndex != prev)
+        {
+            UpdateGrassSrvHandle();
+        }
         ImGui::End();
     }
 }
@@ -1699,6 +1729,9 @@ void RenderingSystem::DeferredPass()
     cmd->SetGraphicsRootDescriptorTable(5, m_ibl.tableStart);
     cmd->SetGraphicsRootDescriptorTable(6, m_shadowMaskSRV);
     cmd->SetGraphicsRootDescriptorTable(7, m_tlasSrvGpu);
+    UpdateAlphaShadowCB();
+    cmd->SetGraphicsRootConstantBufferView(8, m_alphaShadowCB->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootDescriptorTable(9, m_grassSrvGpu);
 
     cmd->SetPipelineState(m_pipeline.GetSkyPSO());
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -2696,7 +2729,8 @@ void RenderingSystem::BuildBLAS_Once(ID3D12Device5* device5, ID3D12GraphicsComma
 
         D3D12_RAYTRACING_GEOMETRY_DESC geom{};
         geom.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-        geom.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        //geom.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        geom.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_NONE;
 
         geom.Triangles.VertexBuffer.StartAddress = vbv.BufferLocation;
         geom.Triangles.VertexBuffer.StrideInBytes = vbv.StrideInBytes;
@@ -2758,12 +2792,13 @@ void RenderingSystem::BuildOrUpdateTLAS(ID3D12Device5* device5, ID3D12GraphicsCo
         inst.InstanceID = (UINT)i;
         inst.InstanceContributionToHitGroupIndex = 0;
         inst.InstanceMask = 0xFF;
-        inst.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+        //inst.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
+        inst.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_NON_OPAQUE | D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE;
         inst.AccelerationStructure = m_blas[i]->GetGPUVirtualAddress();
 
         XMMATRIX W = m_objects[i].GetWorldMatrix();
-        XMFLOAT4X4 wf; 
-        XMStoreFloat4x4(&wf, XMMatrixTranspose(W));
+        XMFLOAT4X4 wf;
+        XMStoreFloat4x4(&wf, W);
 
         inst.Transform[0][0] = wf._11; inst.Transform[0][1] = wf._12; inst.Transform[0][2] = wf._13; inst.Transform[0][3] = wf._14;
         inst.Transform[1][0] = wf._21; inst.Transform[1][1] = wf._22; inst.Transform[1][2] = wf._23; inst.Transform[1][3] = wf._24;
@@ -2847,4 +2882,50 @@ void RenderingSystem::BuildOrUpdateTLAS(ID3D12Device5* device5, ID3D12GraphicsCo
 
     auto uav = CD3DX12_RESOURCE_BARRIER::UAV(m_tlas.Get());
     cmd->ResourceBarrier(1, &uav);
+}
+
+void RenderingSystem::InitAlphaShadowDemoResources()
+{
+    auto* device = m_framework->GetDevice();
+
+    if (!m_alphaShadowCB)
+    {
+        const UINT cbSize = Align256(sizeof(AlphaShadowCBData));
+        m_alphaShadowCB = CreateUploadBuffer(device, cbSize);
+    }
+
+    UpdateGrassSrvHandle();
+
+    UpdateAlphaShadowCB();
+}
+
+void RenderingSystem::UpdateGrassSrvHandle()
+{
+    if (m_objects.empty()) return;
+
+    if (m_grassObjectIndex < 0) m_grassObjectIndex = 0;
+    if (m_grassObjectIndex >= (int)m_objects.size()) m_grassObjectIndex = (int)m_objects.size() - 1;
+
+    m_grassSrvIndex = m_objects[(size_t)m_grassObjectIndex].texIdx[0];
+
+    auto gpuStart = m_framework->GetSrvHeap()->GetGPUDescriptorHandleForHeapStart();
+    gpuStart.ptr += UINT64(m_grassSrvIndex) * m_framework->GetSrvDescriptorSize();
+    m_grassSrvGpu = gpuStart;
+}
+
+void RenderingSystem::UpdateAlphaShadowCB()
+{
+    if (!m_alphaShadowCB) return;
+
+    AlphaShadowCBData data{};
+    data.GrassInstanceID = (uint32_t)m_grassObjectIndex;
+    data.GrassUsesXZ = m_grassUsesXZ;
+    data.GrassAlphaCutoff = m_grassAlphaCutoff;
+    data.GrassUvScale = m_grassUvScale;
+    data.GrassUvOffset = m_grassUvOffset;
+
+    void* p = nullptr;
+    ThrowIfFailed(m_alphaShadowCB->Map(0, nullptr, &p));
+    memcpy(p, &data, sizeof(data));
+    m_alphaShadowCB->Unmap(0, nullptr);
 }

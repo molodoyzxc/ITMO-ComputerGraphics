@@ -269,7 +269,7 @@ private:
     UINT m_tlasSrvIndex = UINT_MAX;
     D3D12_GPU_DESCRIPTOR_HANDLE m_tlasSrvGpu{};
     bool m_rtBuilt = false;
-    float ShadowsMode = 0.0f;
+    float ShadowsMode = 1.0f;
     std::vector<ComPtr<ID3D12Resource>> m_blasScratch;
 
     UINT m_tlasInstanceCount = 0;
@@ -296,6 +296,16 @@ private:
     float m_dayLengthSec = 60.0f;
     float m_timeOfDaySec = 0.0f;
     float m_sunAzimuthDeg = 0.0f;
+
+    ComPtr<ID3D12Resource> m_alphaShadowCB;
+    UINT m_grassSrvIndex = UINT(-1);
+    D3D12_GPU_DESCRIPTOR_HANDLE m_grassSrvGpu{};
+
+    int m_grassObjectIndex = 1;
+    float m_grassAlphaCutoff = 0.1f;
+    uint32_t m_grassUsesXZ = 1;
+    XMFLOAT2 m_grassUvScale = { 0.1f, 0.1f };
+    XMFLOAT2 m_grassUvOffset = { 0.5f, 0.5f };
 
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -374,4 +384,8 @@ private:
     void UpdateRaytracingTLAS();
     void BuildBLAS_Once(ID3D12Device5* device5, ID3D12GraphicsCommandList4* cmd4);
     void BuildOrUpdateTLAS(ID3D12Device5* device5, ID3D12GraphicsCommandList4* cmd4, bool update);
+
+    void InitAlphaShadowDemoResources();
+    void UpdateAlphaShadowCB();
+    void UpdateGrassSrvHandle();
 };

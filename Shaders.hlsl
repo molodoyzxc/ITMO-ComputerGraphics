@@ -520,14 +520,25 @@ float3 SampleCone(float3 axis, float cosThetaMax, float u1, float u2)
                      axis * cosTheta);
 }
 
+cbuffer AlphaShadowCB : register(b6)
+{
+    uint GrassInstanceID;
+    uint GrassUsesXZ;
+    float GrassAlphaCutoff;
+    float _pad0;
+
+    float2 GrassUvScale;
+    float2 GrassUvOffset;
+}
+
+Texture2D<float4> gGrassTex : register(t30);
+
 float TraceShadow(float3 origin, float3 dir, float tMax, float3 worldPos)
 {
-    RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH |
-         RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
-         RAY_FLAG_CULL_BACK_FACING_TRIANGLES > q;
+    RayQuery < RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES > q;
 
     float distToCam = length(worldPos - CameraPos.xyz);
-    float tmin = max(0.001, distToCam * 1e-5);
+    float tmin = 1;
 
     RayDesc ray;
     ray.Origin = origin;
@@ -536,8 +547,38 @@ float TraceShadow(float3 origin, float3 dir, float tMax, float3 worldPos)
     ray.TMax = tMax;
 
     q.TraceRayInline(gScene, 0, 0xFF, ray);
+
     while (q.Proceed())
     {
+        if (q.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE)
+        {
+            uint instID = q.CandidateInstanceID();
+
+            if (instID == GrassInstanceID)
+            {
+                float t = q.CandidateTriangleRayT();
+                float3 hitW = origin + dir * t;
+                
+                float4 hitObj4 = mul(float4(hitW, 1.0), q.CandidateWorldToObject3x4());
+                float3 hitObj = hitObj4.xyz;
+
+                float2 baseUV = (GrassUsesXZ != 0) ? hitObj.xz : hitObj.xy;
+
+                float2 uv = baseUV * GrassUvScale + GrassUvOffset;
+                uv = frac(uv);
+
+                float a = gGrassTex.SampleLevel(samLinear, uv, 0).a;
+                
+                if (a >= GrassAlphaCutoff)
+                {
+                    q.CommitNonOpaqueTriangleHit();
+                }
+            }
+            else
+            {
+                q.CommitNonOpaqueTriangleHit();
+            }
+        }
     }
 
     return (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) ? 0.0 : 1.0;
