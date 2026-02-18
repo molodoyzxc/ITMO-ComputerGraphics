@@ -172,6 +172,17 @@ struct MotionBlurCBData
     float _pad0;
 };
 
+struct AnimCBData
+{
+    float Time;
+    float Amplitude;
+    float Explode;  
+    UINT Mode;
+
+    float Frequency;
+    float pad[3];
+};
+
 static float Halton(uint32_t index, uint32_t base)
 {
     float f = 1.0f;
@@ -238,7 +249,7 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            "Assets\\SponzaCrytek\\sponza.obj", 
+            //"Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
@@ -249,7 +260,8 @@ void RenderingSystem::SetObjects()
             //"Assets\\TestShadows\\floor.obj", 
             //"Assets\\TestShadows\\TestRT.obj", 
             //"Assets\\Cube\\cube.obj", 
-            //"Assets\\Camera\\vintage_video_camera_1k.obj",
+            "Assets\\Camera\\vintage_video_camera_1k.obj",
+            //"Assets\\Dragon\\dragon.obj",
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
@@ -387,13 +399,13 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
     //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
-    //std::filesystem::path sceneFolder = L"Assets\\Camera";
+    std::filesystem::path sceneFolder = L"Assets\\Camera";
 
     auto makeFullPath = [&](const std::string& rel, std::filesystem::path& out)->bool 
         {
@@ -545,6 +557,18 @@ void RenderingSystem::CreateConstantBuffers()
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_motionBlurCB)));
         CD3DX12_RANGE rr(0, 0);
         m_motionBlurCB->Map(0, &rr, reinterpret_cast<void**>(&m_pMotionBlurData));
+    }
+
+    {
+        const UINT totalSize = Align256(sizeof(AnimCBData));
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_animBuffer)));
+
+        CD3DX12_RANGE rr(0, 0);
+        m_animBuffer->Map(0, &rr, reinterpret_cast<void**>(&m_pAnimData));
     }
 }
 
@@ -979,6 +1003,17 @@ void RenderingSystem::Update(float)
     m_frameIndex++;
     dt = timer.GetElapsedSeconds();
 
+    m_animTime += dt;
+
+    m_animExplode = m_input->IsKeyDown(Keys::G) ? 1.0f : 0.0f;
+
+    bool hDown = m_input->IsKeyDown(Keys::H);
+    if (hDown && !m_prevKeyH)
+    {
+        m_animMode = (m_animMode + 1) % 3;
+    }
+    m_prevKeyH = hDown;
+
     if (m_input->IsKeyDown(Keys::F1)) lights[0].type = 0;
     if (m_input->IsKeyDown(Keys::F2)) lights[0].type = 1;
     if (m_input->IsKeyDown(Keys::F3)) lights[0].type = 2;
@@ -1064,6 +1099,17 @@ void RenderingSystem::Render()
     UpdatePerObjectCBs();
     UpdateTessellationCB();
 
+    {
+        AnimCBData a{};
+        a.Time = m_animTime;
+        a.Amplitude = m_animAmplitude;
+        a.Explode = m_animExplode;
+        a.Mode = m_animMode;
+        a.Frequency = m_animFrequency;
+
+        memcpy(m_pAnimData, &a, sizeof(a));
+    }
+
     ShadowPass();
 
     m_gbuffer->Bind(cmd);
@@ -1077,7 +1123,7 @@ void RenderingSystem::Render()
 
     UpdateTerrainBrush(cmd, dt);
 
-    //TerrainPass();
+    TerrainPass();
 
     {
         D3D12_RESOURCE_DESC depthDesc = m_gbuffer->GetDepthResource()->GetDesc();
@@ -1697,6 +1743,7 @@ void RenderingSystem::GeometryPass()
             cmd->SetGraphicsRootDescriptorTable(3, srvStart);
             cmd->SetGraphicsRootDescriptorTable(4, sampStart);
             cmd->SetGraphicsRootConstantBufferView(5, m_materialBuffer->GetGPUVirtualAddress() + (UINT)i * materialSize);
+            cmd->SetGraphicsRootConstantBufferView(6, m_animBuffer->GetGPUVirtualAddress());
 
             const UINT srvStep = m_framework->GetSrvDescriptorSize();
             const auto& md = m_meshletData[objIndex][lod];
@@ -1734,6 +1781,7 @@ void RenderingSystem::GeometryPass()
             cmd->SetGraphicsRootDescriptorTable(3, srvStart);
             cmd->SetGraphicsRootDescriptorTable(4, sampStart);
             cmd->SetGraphicsRootConstantBufferView(5, m_materialBuffer->GetGPUVirtualAddress() + (UINT)i * materialSize);
+            cmd->SetGraphicsRootConstantBufferView(6, m_animBuffer->GetGPUVirtualAddress());
 
             cmd->IASetVertexBuffers(0, 1, &obj->lodVBs[lod]);
             cmd->IASetIndexBuffer(&obj->lodIBs[lod]);

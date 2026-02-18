@@ -153,15 +153,16 @@ void Pipeline::Init()
 
         CD3DX12_DESCRIPTOR_RANGE samplerRange(D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER, 1, 0);
 
-        CD3DX12_ROOT_PARAMETER params[8] = {};
+        CD3DX12_ROOT_PARAMETER params[9] = {};
         params[0].InitAsConstantBufferView(0, 0, D3D12_SHADER_VISIBILITY_ALL);
         params[1].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_ALL);
         params[2].InitAsConstantBufferView(2, 0, D3D12_SHADER_VISIBILITY_ALL);
         params[3].InitAsDescriptorTable(1, &srvRange, D3D12_SHADER_VISIBILITY_ALL);
-        params[4].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_ALL);
+        params[4].InitAsDescriptorTable(1, &samplerRange, D3D12_SHADER_VISIBILITY_ALL); 
         params[5].InitAsConstantBufferView(4, 0, D3D12_SHADER_VISIBILITY_ALL);
-        params[6].InitAsShaderResourceView(0, 1, D3D12_SHADER_VISIBILITY_ALL);
+        params[6].InitAsConstantBufferView(3, 0, D3D12_SHADER_VISIBILITY_ALL);
         params[7].InitAsDescriptorTable(1, &meshletRange, D3D12_SHADER_VISIBILITY_ALL);
+        params[8].InitAsShaderResourceView(0, 1, D3D12_SHADER_VISIBILITY_ALL);
 
         CD3DX12_ROOT_SIGNATURE_DESC desc(_countof(params), params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE);
 

@@ -41,6 +41,17 @@ cbuffer AmbientCB : register(b2)
     float4 SunParams;
 };
 
+cbuffer AnimCB : register(b3)
+{
+    float Time; 
+    float Amplitude;
+    float Explode;
+    uint Mode;
+
+    float Frequency;
+    float3 _padAnim;
+};
+
 cbuffer MaterialCB : register(b4)
 {
     float useNormalMap; // 0 – geometry, 1 – normal map
@@ -932,8 +943,34 @@ void MS_GBuffer(
         uint vIdx = gMeshletVertices[m.vertexOffset + tid];
         MeshVertex v = gMeshVertices[vIdx];
 
+        float3 p = v.pos;
+
+        if (Mode == 0)
+        {
+            float s = 1.0 + Explode * Amplitude * sin(Time);
+            p *= s;
+        }
+        else if (Mode == 1)
+        {
+            uint h = HashU32(groupId.x * 9781u + 6271u);
+            float3 dir;
+            dir.x = ((h & 1023u) / 511.5f) - 1.0f;
+            dir.y = (((h >> 10) & 1023u) / 511.5f) - 1.0f;
+            dir.z = (((h >> 20) & 1023u) / 511.5f) - 1.0f;
+            dir = normalize(dir);
+
+            float t = 0.5 + 0.5 * sin(Time);
+            p += dir * (Explode * Amplitude) * t;
+        }
+        else if (Mode == 2)
+        {
+            float phase = dot(p, float3(0.0, 1.0, 0.0)) * Frequency;
+            float w = sin(Time + phase);
+            p += v.normal * (Explode * Amplitude) * w;
+        }
+        
         MSOut OUT;
-        float4 wp = mul(float4(v.pos, 1.0), World);
+        float4 wp = mul(float4(p, 1.0), World);
         OUT.worldPos = wp;
         OUT.posH = mul(wp, ViewProj);
 

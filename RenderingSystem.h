@@ -323,6 +323,17 @@ private:
     XMMATRIX m_prevViewProj_NoJitter;
     XMMATRIX m_invViewProj_NoJitter;
 
+    ComPtr<ID3D12Resource> m_animBuffer;
+    uint8_t* m_pAnimData = nullptr;
+
+    float m_animTime = 0.0f;
+    float m_animAmplitude = 0.2f;
+    float m_animExplode = 0.0f;
+    float m_animFrequency = 6.0f;
+    uint32_t m_animMode = 1;
+
+    bool m_prevKeyH = false;
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
