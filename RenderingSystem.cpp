@@ -160,6 +160,18 @@ struct AlphaShadowCBData
     XMFLOAT2 GrassUvOffset;
 };
 
+struct MotionBlurCBData
+{
+    XMFLOAT4X4 ViewProj;
+    XMFLOAT4X4 PrevViewProj;
+    XMFLOAT4X4 InvViewProj;
+    XMFLOAT2 ScreenSize;
+    float Strength;
+    float MaxPixels;
+    uint32_t Samples;
+    float _pad0;
+};
+
 static float Halton(uint32_t index, uint32_t base)
 {
     float f = 1.0f;
@@ -226,7 +238,7 @@ void RenderingSystem::SetObjects()
     m_objects = loader.LoadSceneObjectsLODs
     (
         {
-            //"Assets\\SponzaCrytek\\sponza.obj", 
+            "Assets\\SponzaCrytek\\sponza.obj", 
             //"Assets\\TestPBR\\TestPBR.obj", 
             //"Assets\\Can\\Gas_can.obj", 
             //"Assets\\LOD\\bunnyLOD0.obj", 
@@ -235,14 +247,14 @@ void RenderingSystem::SetObjects()
             //"Assets\\LOD\\bunnyLOD3.obj", 
             //"Assets\\TestShadows\\test.obj", 
             //"Assets\\TestShadows\\floor.obj", 
-            "Assets\\TestShadows\\TestRT.obj", 
+            //"Assets\\TestShadows\\TestRT.obj", 
             //"Assets\\Cube\\cube.obj", 
             //"Assets\\Camera\\vintage_video_camera_1k.obj",
         },
         { 0.0f, 500.0f, 1000.0f, 1500.0f, }
     );
 
-    m_objectScale = 1.1f;
+    m_objectScale = 0.1f;
     for (auto& obj : m_objects) obj.scale = { m_objectScale, m_objectScale, m_objectScale };
 
     m_meshletData.clear();
@@ -375,11 +387,11 @@ void RenderingSystem::LoadTextures()
     DirectX::ResourceUploadBatch uploadBatch(device);
     uploadBatch.Begin();
 
-    //std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
+    std::filesystem::path sceneFolder = L"Assets\\SponzaCrytek";
     //std::filesystem::path sceneFolder = L"Assets\\TestPBR";
     //std::filesystem::path sceneFolder = L"Assets\\Can";
     //std::filesystem::path sceneFolder = L"Assets\\LOD";
-    std::filesystem::path sceneFolder = L"Assets\\TestShadows";
+    //std::filesystem::path sceneFolder = L"Assets\\TestShadows";
     //std::filesystem::path sceneFolder = L"Assets\\Cube";
     //std::filesystem::path sceneFolder = L"Assets\\Camera";
 
@@ -523,6 +535,16 @@ void RenderingSystem::CreateConstantBuffers()
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_taaCB)));
         CD3DX12_RANGE rr(0, 0);
         m_taaCB->Map(0, &rr, reinterpret_cast<void**>(&m_pTaaData));
+    }
+
+    {
+        const UINT totalSize = Align256(sizeof(MotionBlurCBData));
+        const auto desc = CD3DX12_RESOURCE_DESC::Buffer(totalSize);
+        ThrowIfFailed(device->CreateCommittedResource(
+            &heapUpload, D3D12_HEAP_FLAG_NONE, &desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_motionBlurCB)));
+        CD3DX12_RANGE rr(0, 0);
+        m_motionBlurCB->Map(0, &rr, reinterpret_cast<void**>(&m_pMotionBlurData));
     }
 }
 
@@ -1028,6 +1050,8 @@ void RenderingSystem::Render()
     ImGui::NewFrame();
     UpdateUI();
 
+    m_prevViewProj_NoJitter = m_viewProj_NoJitter;
+
     BuildViewProj();
 
     XMMATRIX invVP = XMMatrixInverse(nullptr, viewProj);
@@ -1295,6 +1319,22 @@ void RenderingSystem::UpdateUI()
         }
         ImGui::End();
     }
+
+    {
+        ImGui::Begin("Motion Blur");
+
+        ImGui::Checkbox("Enable", &m_mbEnabled);
+        ImGui::SliderFloat("Strength", &m_mbStrength, 0.0f, 5.0f, "%.2f");
+        ImGui::SliderFloat("Max Pixels", &m_mbMaxPixels, 0.0f, 200.0f, "%.0f");
+
+        int samples = (int)m_mbSamples;
+        if (ImGui::SliderInt("Samples", &samples, 2, 64))
+        {
+            m_mbSamples = (uint32_t)samples;
+        }
+            
+        ImGui::End();
+    }
 }
 
 void RenderingSystem::BuildViewProj()
@@ -1316,6 +1356,9 @@ void RenderingSystem::BuildViewProj()
     const float aspect = w / h;
 
     XMMATRIX P = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, m_near, m_far);
+
+    m_viewProj_NoJitter = view * proj;
+    m_invViewProj_NoJitter = XMMatrixInverse(nullptr, m_viewProj_NoJitter);
 
     if (m_enableTAA)
     {
@@ -2023,6 +2066,8 @@ void RenderingSystem::PostProcessPass()
     SetCommonHeaps();
     UpdatePostCB();
 
+    const XMMATRIX prevVP_ForMB = m_prevViewProj;
+
     D3D12_GPU_DESCRIPTOR_HANDLE cur = m_lightAccumSRV;
     bool useA = true;
 
@@ -2108,6 +2153,22 @@ void RenderingSystem::PostProcessPass()
         ApplyTAAToIntermediate(cur, histSrv, prevDepthSrv, currDepthSrv, velocitySrv, dstRes, dstRTV, taaOut);
         cur = taaOut;
 
+        {
+            const auto& gbufSrvs = m_gbuffer->GetSRVs();
+            D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv = gbufSrvs[3];
+
+            ID3D12Resource* dstRes = useA ? m_postA.Get() : m_postB.Get();
+            D3D12_CPU_DESCRIPTOR_HANDLE dstRTV = useA ? m_postARTV : m_postBRTV;
+
+            XMMATRIX invVP_NoJitter = m_invViewProj_NoJitter;
+
+            D3D12_GPU_DESCRIPTOR_HANDLE outSrv{};
+            ApplyMotionBlurToIntermediate(cur, currDepthSrv, prevVP_ForMB, invVP_NoJitter, dstRes, dstRTV, outSrv);
+
+            cur = outSrv;
+            useA = !useA;
+        }
+
         m_prevViewProj = viewProj;
 
         CopyDepthToPrev();
@@ -2116,6 +2177,22 @@ void RenderingSystem::PostProcessPass()
     }
     else
     {
+        {
+            const auto& gbufSrvs = m_gbuffer->GetSRVs();
+            D3D12_GPU_DESCRIPTOR_HANDLE currDepthSrv = gbufSrvs[3];
+
+            ID3D12Resource* dstRes = useA ? m_postA.Get() : m_postB.Get();
+            D3D12_CPU_DESCRIPTOR_HANDLE dstRTV = useA ? m_postARTV : m_postBRTV;
+
+            XMMATRIX invVP_NoJitter = m_invViewProj_NoJitter;
+
+            D3D12_GPU_DESCRIPTOR_HANDLE outSrv{};
+            ApplyMotionBlurToIntermediate(cur, currDepthSrv, prevVP_ForMB, invVP_NoJitter, dstRes, dstRTV, outSrv);
+
+            cur = outSrv;
+            useA = !useA;
+        }
+
         m_prevViewProj = viewProj;
         CopyDepthToPrev();
     }
@@ -2928,4 +3005,71 @@ void RenderingSystem::UpdateAlphaShadowCB()
     ThrowIfFailed(m_alphaShadowCB->Map(0, nullptr, &p));
     memcpy(p, &data, sizeof(data));
     m_alphaShadowCB->Unmap(0, nullptr);
+}
+
+void RenderingSystem::EnsureMotionBlurResources()
+{
+    if (!m_motionBlurCB)
+    {
+        ID3D12Device* device = m_framework->GetDevice();
+        m_motionBlurCB = CreateUploadBuffer(device, 256);
+    }
+}
+
+void RenderingSystem::UpdateMotionBlurCB()
+{
+    EnsureMotionBlurResources();
+
+    MotionBlurCBData mb{};
+    XMStoreFloat4x4(&mb.ViewProj, m_viewProj_NoJitter);
+    XMStoreFloat4x4(&mb.PrevViewProj, m_prevViewProj_NoJitter);
+    XMStoreFloat4x4(&mb.InvViewProj, m_invViewProj_NoJitter);
+
+    mb.ScreenSize = { (float)m_framework->GetWidth(), (float)m_framework->GetHeight() };
+    mb.Strength = (m_mbEnabled ? m_mbStrength : 0.0f);
+    mb.MaxPixels = m_mbMaxPixels;
+    mb.Samples = m_mbSamples;
+
+    void* p = nullptr;
+    ThrowIfFailed(m_motionBlurCB->Map(0, nullptr, &p));
+    memcpy(p, &mb, sizeof(mb));
+    m_motionBlurCB->Unmap(0, nullptr);
+}
+
+void RenderingSystem::ApplyMotionBlurToIntermediate(
+    D3D12_GPU_DESCRIPTOR_HANDLE colorSrv,
+    D3D12_GPU_DESCRIPTOR_HANDLE depthSrv,
+    const XMMATRIX& prevViewProj,
+    const XMMATRIX& invViewProj,
+    ID3D12Resource* dst,
+    D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
+    D3D12_GPU_DESCRIPTOR_HANDLE& outSrv)
+{
+    D3D12_RESOURCE_STATES* pState =
+        (dst == m_postA.Get()) ? &m_postAState : &m_postBState;
+
+    TransitionResource(cmd, dst, *pState, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    cmd->OMSetRenderTargets(1, &dstRtv, FALSE, nullptr);
+    const float clear[4] = { 0,0,0,1 };
+    cmd->ClearRenderTargetView(dstRtv, clear, 0, nullptr);
+    m_framework->SetViewportAndScissors();
+
+    UpdateMotionBlurCB();
+
+    cmd->SetGraphicsRootSignature(m_pipeline.GetMotionBlurRS());
+    SetCommonHeaps();
+
+    cmd->SetPipelineState(m_pipeline.GetMotionBlurPSO());
+
+    cmd->SetGraphicsRootDescriptorTable(0, colorSrv);
+    cmd->SetGraphicsRootDescriptorTable(1, depthSrv);
+    cmd->SetGraphicsRootConstantBufferView(2, m_motionBlurCB->GetGPUVirtualAddress());
+
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
+
+    TransitionResource(cmd, dst, *pState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    outSrv = (dst == m_postA.Get()) ? m_postASRV : m_postBSRV;
 }

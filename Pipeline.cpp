@@ -102,6 +102,9 @@ void Pipeline::Init()
     Compile(L"TAA.hlsl", L"PS_TAA", L"ps_6_5", psTAA);
     Compile(L"Velocity.hlsl", L"PS_Velocity", L"ps_6_5", psVelocity);
 
+    ComPtr<IDxcBlob> psMotionBlur;
+    Compile(L"MotionBlur.hlsl", L"PS_MotionBlur", L"ps_6_5", psMotionBlur);
+
     ComPtr<IDxcBlob> msGBuffer;
     if (m_framework->IsMeshShaderSupported())
     {
@@ -290,6 +293,38 @@ void Pipeline::Init()
         ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err));
         ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(0, sig->GetBufferPointer(),
             sig->GetBufferSize(), IID_PPV_ARGS(&m_taaRootSig)));
+    }
+
+    // Motion Blur RS
+    {
+        CD3DX12_DESCRIPTOR_RANGE rangeColor;
+        rangeColor.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 20);
+
+        CD3DX12_DESCRIPTOR_RANGE rangeDepth;
+        rangeDepth.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+
+        CD3DX12_ROOT_PARAMETER params[3] = {};
+        params[0].InitAsDescriptorTable(1, &rangeColor, D3D12_SHADER_VISIBILITY_PIXEL);
+        params[1].InitAsDescriptorTable(1, &rangeDepth, D3D12_SHADER_VISIBILITY_PIXEL);
+        params[2].InitAsConstantBufferView(1, 0, D3D12_SHADER_VISIBILITY_PIXEL);
+
+        D3D12_STATIC_SAMPLER_DESC sampler = CD3DX12_STATIC_SAMPLER_DESC(
+            0,
+            D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+
+        CD3DX12_ROOT_SIGNATURE_DESC desc(
+            _countof(params), params,
+            1, &sampler,
+            D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+        ComPtr<ID3DBlob> sig, err;
+        ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err));
+        ThrowIfFailed(m_framework->GetDevice()->CreateRootSignature(
+            0, sig->GetBufferPointer(), sig->GetBufferSize(),
+            IID_PPV_ARGS(&m_motionBlurRootSig)));
     }
 
     // Opaque 
@@ -614,6 +649,23 @@ void Pipeline::Init()
             ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)));
         };
 
+    auto CreatePostPSO_WithRS = [&](ComPtr<IDxcBlob>& psBlob, ID3D12RootSignature* rs, ComPtr<ID3D12PipelineState>& pso)
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC desc = {};
+            desc.pRootSignature = rs;
+            desc.VS = { vsQuad->GetBufferPointer(), vsQuad->GetBufferSize() };
+            desc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+            desc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+            desc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+            desc.DepthStencilState.DepthEnable = FALSE;
+            desc.SampleMask = UINT_MAX;
+            desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+            desc.NumRenderTargets = 1;
+            desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+            desc.SampleDesc.Count = 1;
+            ThrowIfFailed(m_framework->GetDevice()->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso)));
+        };
+
     CreatePostPSO(psCopyHDRtoLDR, m_copyHDRtoLDRPSO);
     CreatePostPSO(psCopyLDR, m_copyLDRPSO);
     CreatePostPSO(psTonemap, m_tonemapPSO);
@@ -624,6 +676,7 @@ void Pipeline::Init()
     CreatePostPSO(psPixelate, m_pixelatePSO);
     CreatePostPSO(psPosterize, m_posterizePSO);
     CreatePostPSO(psSaturation, m_saturationPSO);
+    CreatePostPSO_WithRS(psMotionBlur, m_motionBlurRootSig.Get(), m_motionBlurPSO);
 
     // Preview
     {

@@ -307,6 +307,22 @@ private:
     XMFLOAT2 m_grassUvScale = { 0.1f, 0.1f };
     XMFLOAT2 m_grassUvOffset = { 0.5f, 0.5f };
 
+    ComPtr<ID3D12Resource> m_lightingColor;
+    UINT m_lightingColorRtvIndex = UINT(-1);
+    UINT m_lightingColorSrvIndex = UINT(-1);
+    D3D12_GPU_DESCRIPTOR_HANDLE m_lightingColorSrvGpu{};
+
+    ComPtr<ID3D12Resource> m_motionBlurCB;
+    uint8_t* m_pMotionBlurData = nullptr;
+    bool m_mbEnabled = false;
+    float m_mbStrength = 1.0f;
+    float m_mbMaxPixels = 32.0f;
+    uint32_t m_mbSamples = 12;
+
+    XMMATRIX m_viewProj_NoJitter;
+    XMMATRIX m_prevViewProj_NoJitter;
+    XMMATRIX m_invViewProj_NoJitter;
+
 private:
     static UINT Align256(UINT size) { return (size + 255) & ~255u; }
     static inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw std::runtime_error("HRESULT failed"); }
@@ -388,4 +404,16 @@ private:
     void InitAlphaShadowDemoResources();
     void UpdateAlphaShadowCB();
     void UpdateGrassSrvHandle();
+
+    void EnsureMotionBlurResources();
+    void UpdateMotionBlurCB();
+    void ApplyMotionBlurToIntermediate(
+        D3D12_GPU_DESCRIPTOR_HANDLE colorSrv,
+        D3D12_GPU_DESCRIPTOR_HANDLE depthSrv,
+        const DirectX::XMMATRIX& prevViewProj,
+        const DirectX::XMMATRIX& invViewProj,
+        ID3D12Resource* dst,
+        D3D12_CPU_DESCRIPTOR_HANDLE dstRtv,
+        D3D12_GPU_DESCRIPTOR_HANDLE& outSrv);
+
 };

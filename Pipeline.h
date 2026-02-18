@@ -49,6 +49,8 @@ public:
     ID3D12PipelineState* GetVelocityPSO() const { return m_velocityPSO.Get(); }
     ID3D12RootSignature* GetMeshletRS() const { return m_meshletRootSignature.Get(); }
     ID3D12PipelineState* GetMeshletGBufferPSO() const { return m_meshletGBufferPSO.Get(); }
+    ID3D12RootSignature* GetMotionBlurRS() const { return m_motionBlurRootSig.Get(); }
+    ID3D12PipelineState* GetMotionBlurPSO() const { return m_motionBlurPSO.Get(); }
 
 private:
     DX12Framework* m_framework;
@@ -88,6 +90,8 @@ private:
     ComPtr<ID3D12PipelineState> m_velocityPSO;
     ComPtr<ID3D12RootSignature> m_meshletRootSignature;
     ComPtr<ID3D12PipelineState> m_meshletGBufferPSO;
+    ComPtr<ID3D12RootSignature> m_motionBlurRootSig;
+    ComPtr<ID3D12PipelineState> m_motionBlurPSO;
 
     void Compile(LPCWSTR file, LPCWSTR entry, LPCWSTR target, ComPtr<IDxcBlob>& outBlob);
 };
